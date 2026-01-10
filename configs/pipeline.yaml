@@ -1,0 +1,46 @@
+# Complete Pipeline Configuration
+
+# Model paths
+models:
+  decode: checkpoints/decode/best_model.pth
+  magik: checkpoints/magik/best_model.pth
+
+# Detection parameters
+detection:
+  threshold: 0.5  # Detection probability threshold
+  min_photons: 100  # Minimum photon count
+
+# Tracking parameters
+tracking:
+  max_frame_gap: 5  # Maximum frames to link across
+  max_distance: 10.0  # Maximum spatial distance (pixels)
+  link_threshold: 0.5  # MAGIK probability threshold for linking
+
+# Calcium analysis parameters
+calcium:
+  roi_size: 5  # ROI size (5x5 pixels)
+  baseline_method: percentile  # or 'rolling'
+  baseline_percentile: 10.0  # For percentile method
+  
+  # Event detection
+  event_threshold: 2.0  # Detection threshold (× std)
+  min_duration: 2  # Minimum event duration (frames)
+  min_distance: 5  # Minimum distance between events (frames)
+
+# Output options
+output:
+  save_tracks: true
+  save_calcium_traces: true
+  save_events: true
+  save_visualizations: true
+  
+  # Visualization options
+  viz_max_tracks: 50  # Maximum tracks to visualize
+  viz_colormap: viridis
+  viz_track_length: 20  # Frames to show trail
+
+# Performance options
+processing:
+  batch_size: 1  # Process movies one at a time
+  device: cuda  # cuda, mps, or cpu
+  num_workers: 4

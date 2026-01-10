@@ -1,0 +1,33 @@
+# DECODE Training Configuration
+
+model:
+  base_channels: 32  # Base channel count for U-Nets
+
+training:
+  learning_rate: 1e-3
+  batch_size: 4
+  num_epochs: 50
+  
+  # Scheduler
+  scheduler: cosine
+  min_lr: 1e-6
+  
+  # Logging
+  log_frequency: 100
+  val_frequency: 500
+  save_frequency: 2000
+
+data:
+  synthetic_dir: data/synthetic
+  train_split: 0.9
+  num_workers: 4
+  
+  # Data augmentation
+  augment: true
+  random_flip: true
+  random_rotate: true
+
+# Expected performance after training:
+# - Localization RMSE: 30-50 nm
+# - Detection recall: > 90%
+# - Detection precision: > 90%

@@ -1,0 +1,35 @@
+# MAGIK Training Configuration
+
+model:
+  node_features: 6  # x, y, t, intensity, σx, σy
+  edge_features: 4  # Δx, Δy, Δt, distance
+  hidden_dim: 128
+  num_layers: 3
+
+training:
+  learning_rate: 1e-3
+  batch_size: 8
+  num_epochs: 30
+  
+  # Scheduler
+  scheduler: cosine
+  min_lr: 1e-6
+  
+  # Logging
+  log_frequency: 50
+  val_frequency: 200
+  save_frequency: 1000
+
+data:
+  synthetic_dir: data/synthetic
+  train_split: 0.9
+  num_workers: 4
+
+graph:
+  max_frame_gap: 5  # Maximum frames to link across
+  max_distance: 10.0  # Maximum spatial distance (pixels)
+
+# Expected performance after training:
+# - Track completeness: > 80%
+# - Identity preservation: > 90%
+# - Linking accuracy: > 85%

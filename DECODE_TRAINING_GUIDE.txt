@@ -1,0 +1,367 @@
+# Quick Start: Training DECODE
+
+You've generated synthetic data - great! Here's how to train DECODE:
+
+---
+
+## ✅ Step 1: Verify Your Synthetic Data
+
+```bash
+# Check your data directory
+ls data/synthetic/
+
+# You should see:
+# sample_00000/
+# sample_00001/
+# sample_00002/
+# ...
+
+# Check one sample
+ls data/synthetic/sample_00000/
+
+# Should contain:
+# movie.tif              (3D TIFF stack)
+# ground_truth_tracks.csv (puncta coordinates with track IDs)
+# metadata.json          (generation parameters)
+```
+
+---
+
+## ✅ Step 2: Test the Dataset (Optional)
+
+```bash
+cd piezo1_decode_magik/piezo1_magik/data
+python decode_dataset.py
+```
+
+**Expected output:**
+```
+Testing DECODE Dataset...
+Found X samples in data/synthetic
+✅ Dataset loaded: X samples
+
+✅ Sample loaded:
+   Images shape: torch.Size([3, H, W])
+   Has puncta: X pixels
+   Offset shape: torch.Size([2, H, W])
+   Photons range: XXX - XXXX
+
+✅ Dataloaders created:
+   Train batches: X
+   Val batches: X
+```
+
+If you see this → **Dataset is working!**
+
+---
+
+## ✅ Step 3: Train DECODE
+
+### **Simple Training (CPU/GPU auto-detect)**
+
+```bash
+python scripts/02_train_decode.py \
+    --config configs/decode_training.yaml \
+    --data data/synthetic \
+    --output checkpoints/decode
+```
+
+### **With GPU Selection**
+
+```bash
+# Use specific GPU
+python scripts/02_train_decode.py \
+    --config configs/decode_training.yaml \
+    --data data/synthetic \
+    --output checkpoints/decode \
+    --gpu 0
+```
+
+### **On Mac with MPS (Apple Silicon)**
+
+```bash
+# Will automatically use MPS if available
+python scripts/02_train_decode.py \
+    --config configs/decode_training.yaml \
+    --data data/synthetic \
+    --output checkpoints/decode
+```
+
+---
+
+## 📊 What You'll See
+
+### **Initial Output:**
+
+```
+======================================================================
+DECODE TRAINING
+======================================================================
+
+Configuration:
+  Data: data/synthetic
+  Output: checkpoints/decode
+  Epochs: 50
+  Batch size: 4
+  Learning rate: 0.001
+  Device: cuda:0
+
+Creating dataloaders...
+Found XXXX samples in data/synthetic
+  Train batches: XXX
+  Val batches: XX
+
+Creating DECODE model...
+  Parameters: 2,XXX,XXX
+
+======================================================================
+STARTING TRAINING
+======================================================================
+```
+
+### **During Training:**
+
+```
+Epoch 0: 100%|████████████| 250/250 [02:15<00:00, 1.85it/s, loss=0.5234, det=0.3456, off=0.1234]
+Validating: 100%|████████| 25/25 [00:12<00:00, 2.03it/s]
+
+Epoch 0:
+  Train Loss: 0.5234 (det=0.3456, off=0.1234, phot=0.0544)
+  Val Loss:   0.4987 (det=0.3245, off=0.1198, phot=0.0544)
+  LR: 1.00e-03
+  🏆 New best model! Val loss: 0.4987
+
+Epoch 1: 100%|████████████| 250/250 [02:14<00:00, 1.86it/s, loss=0.4123, det=0.2876, off=0.0987]
+...
+```
+
+### **Final Output:**
+
+```
+======================================================================
+TRAINING COMPLETE!
+======================================================================
+Best validation loss: 0.2145
+Model saved to: checkpoints/decode/best_model.pth
+```
+
+---
+
+## 📁 Output Files
+
+After training, you'll have:
+
+```
+checkpoints/decode/
+├── best_model.pth              # Best model (lowest val loss)
+├── latest.pth                  # Most recent checkpoint
+├── checkpoint_epoch_10.pth     # Periodic checkpoints
+├── checkpoint_epoch_20.pth
+├── ...
+└── logs/                       # TensorBoard logs
+```
+
+---
+
+## 📈 Monitor Training with TensorBoard
+
+```bash
+tensorboard --logdir checkpoints/decode/logs
+```
+
+Then open http://localhost:6006 in your browser
+
+**You'll see:**
+- Training/validation loss curves
+- Learning rate schedule
+- Per-component losses (detection, offset, photon)
+
+---
+
+## ⏱️ Training Time Estimates
+
+| Hardware | Time per Epoch | Total (50 epochs) |
+|----------|----------------|-------------------|
+| **NVIDIA RTX 3090** | ~2 min | ~1.5 hours |
+| **NVIDIA V100** | ~3 min | ~2.5 hours |
+| **M1 Max (MPS)** | ~5 min | ~4 hours |
+| **CPU (16 cores)** | ~20 min | ~16 hours |
+
+With **5000 samples**, batch size 4:
+- Train batches: ~1125
+- Val batches: ~125
+
+---
+
+## 🎯 Expected Performance
+
+After **50 epochs**, you should see:
+
+| Metric | Good | Excellent |
+|--------|------|-----------|
+| **Val Loss** | < 0.25 | < 0.20 |
+| **Detection Loss** | < 0.15 | < 0.10 |
+| **Offset Loss** | < 0.08 | < 0.05 |
+
+**Localization RMSE**: ~30-50 nm (will evaluate separately)
+
+---
+
+## 🛠️ Troubleshooting
+
+### **Issue: Out of Memory**
+
+**Solution**: Reduce batch size in config:
+```yaml
+# configs/decode_training.yaml
+training:
+  batch_size: 2  # Was 4
+```
+
+### **Issue: Training Too Slow**
+
+**Solutions**:
+1. Reduce `num_workers` if CPU-bound:
+   ```yaml
+   data:
+     num_workers: 2  # Was 4
+   ```
+
+2. Reduce model size:
+   ```yaml
+   model:
+     base_channels: 16  # Was 32
+   ```
+
+### **Issue: Dataset Not Found**
+
+**Check**:
+```bash
+# Make sure data exists
+ls data/synthetic/sample_00000/
+
+# Should have:
+# - movie.tif
+# - ground_truth_tracks.csv
+# - metadata.json
+```
+
+### **Issue: Loss Not Decreasing**
+
+**Possible causes**:
+1. Learning rate too high/low
+2. Not enough data (need >1000 samples)
+3. Data quality issues
+
+**Try**:
+```yaml
+training:
+  learning_rate: 5e-4  # Try lower LR
+```
+
+---
+
+## 🔄 Resume Training
+
+If training was interrupted:
+
+```bash
+python scripts/02_train_decode.py \
+    --config configs/decode_training.yaml \
+    --data data/synthetic \
+    --output checkpoints/decode \
+    --resume checkpoints/decode/latest.pth
+```
+
+---
+
+## ✅ Verify Training Worked
+
+After training completes, test the model:
+
+```bash
+# Test DECODE on new synthetic data
+python scripts/04_run_pipeline.py \
+    --decode checkpoints/decode/best_model.pth \
+    --magik checkpoints/magik/best_model.pth \  # Skip for now
+    --input data/synthetic/sample_00000/movie.tif \
+    --output test_results/
+```
+
+(You'll need to modify the pipeline script to work with single-channel data if testing before MAGIK is trained)
+
+---
+
+## 📝 Configuration Details
+
+See `configs/decode_training.yaml`:
+
+```yaml
+model:
+  base_channels: 32  # Model size (16=small, 32=default, 64=large)
+
+training:
+  learning_rate: 1e-3    # Adam learning rate
+  batch_size: 4          # Samples per batch
+  num_epochs: 50         # Total epochs
+  
+  scheduler: cosine      # LR schedule
+  min_lr: 1e-6          # Minimum LR
+  
+  log_frequency: 100     # Log every N batches
+  val_frequency: 500     # Validate every N batches
+  save_frequency: 2000   # Save checkpoint every N batches
+
+data:
+  synthetic_dir: data/synthetic
+  train_split: 0.9  # 90% train, 10% val
+  num_workers: 4    # Parallel data loading
+```
+
+---
+
+## 🎉 Next Steps
+
+After DECODE training:
+
+1. **Evaluate localization accuracy** (compare predictions to ground truth)
+2. **Train MAGIK** for tracking (uses DECODE detections)
+3. **Run full pipeline** on real data
+
+---
+
+## 💡 Pro Tips
+
+1. **Start small**: Train on 100 samples first to verify everything works
+2. **Monitor TensorBoard**: Check if losses are decreasing smoothly
+3. **Save checkpoints**: Enable periodic saves every 10 epochs
+4. **Test early**: After 10 epochs, test on validation data to see predictions
+
+---
+
+## 🚀 Quick Complete Example
+
+```bash
+# 1. Generate data (if not done)
+python scripts/01_generate_synthetic_data.py \
+    --output data/synthetic \
+    --num_samples 1000 \
+    --with_blinking
+
+# 2. Train DECODE
+python scripts/02_train_decode.py \
+    --config configs/decode_training.yaml \
+    --data data/synthetic \
+    --output checkpoints/decode \
+    --gpu 0
+
+# 3. Monitor
+tensorboard --logdir checkpoints/decode/logs
+
+# Training will take ~2-4 hours on GPU
+# Best model saved to: checkpoints/decode/best_model.pth
+```
+
+---
+
+**Questions? Issues?** Check the main IMPLEMENTATION_GUIDE.md or the troubleshooting section above!

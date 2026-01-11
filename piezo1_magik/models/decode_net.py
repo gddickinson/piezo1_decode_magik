@@ -92,8 +92,8 @@ class TemporalContextNet(nn.Module):
         self.up1 = nn.ConvTranspose2d(base_channels * 4, base_channels * 2, 2, 2)
         self.dec1 = self._make_block(base_channels * 4, base_channels * 2)
         
-        self.up2 = nn.ConvTranspose2d(base_channels * 2, base_channels, 2, 2)
-        self.dec2 = self._make_block(base_channels * 3, base_channels)
+        # Final layer to get back to base_channels
+        self.final = nn.Conv2d(base_channels * 2, base_channels, 1)
     
     def _make_block(self, in_ch, out_ch):
         return nn.Sequential(
@@ -112,18 +112,19 @@ class TemporalContextNet(nn.Module):
         Returns:
             features: (B, base_channels, H, W)
         """
-        e1 = self.enc1(x)
-        e2 = self.enc2(self.pool(e1))
+        # Encoder
+        e1 = self.enc1(x)  # (B, 2*base_channels, H, W)
+        e2 = self.enc2(self.pool(e1))  # (B, 4*base_channels, H/2, W/2)
         
-        d1 = self.up1(e2)
-        d1 = torch.cat([d1, e1], dim=1)
-        d1 = self.dec1(d1)
+        # Decoder
+        d1 = self.up1(e2)  # (B, 2*base_channels, H, W)
+        d1 = torch.cat([d1, e1], dim=1)  # (B, 4*base_channels, H, W)
+        d1 = self.dec1(d1)  # (B, 2*base_channels, H, W)
         
-        d2 = self.up2(d1)
-        d2 = torch.cat([d2, x[:, :32]], dim=1)  # Skip from input
-        d2 = self.dec2(d2)
+        # Final projection to base_channels
+        out = self.final(d1)  # (B, base_channels, H, W)
         
-        return d2
+        return out
 
 
 class DECODENet(nn.Module):

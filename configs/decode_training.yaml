@@ -4,13 +4,13 @@ model:
   base_channels: 32  # Base channel count for U-Nets
 
 training:
-  learning_rate: 1e-3
+  learning_rate: 0.001  # 1e-3
   batch_size: 4
   num_epochs: 50
   
   # Scheduler
   scheduler: cosine
-  min_lr: 1e-6
+  min_lr: 0.000001  # 1e-6
   
   # Logging
   log_frequency: 100

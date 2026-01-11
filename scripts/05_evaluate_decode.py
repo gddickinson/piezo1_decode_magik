@@ -442,6 +442,292 @@ def plot_results(results, output_dir):
     print(f"✅ Plots saved to: {output_dir}")
 
 
+def plot_visual_inspection(model, dataset, output_dir, device='cpu', threshold=0.5, num_samples=6):
+    """
+    Create visual inspection plots showing detections overlaid on images.
+    
+    Args:
+        model: Trained DECODE model
+        dataset: DECODEDataset
+        output_dir: Where to save plots
+        device: Device to run on
+        threshold: Detection threshold
+        num_samples: Number of samples to visualize
+    """
+    output_dir = Path(output_dir)
+    
+    print(f"\nCreating visual inspection plots...")
+    
+    # Select diverse samples (evenly spaced through dataset)
+    total_samples = len(dataset)
+    if num_samples > total_samples:
+        num_samples = total_samples
+    
+    sample_indices = np.linspace(0, total_samples - 1, num_samples, dtype=int)
+    
+    # Create figure
+    fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+    axes = axes.flatten()
+    
+    for plot_idx, sample_idx in enumerate(sample_indices):
+        if plot_idx >= len(axes):
+            break
+            
+        # Get sample
+        sample = dataset[sample_idx]
+        
+        # Get images and ground truth
+        images = sample['images']  # (3, H, W) tensor
+        has_puncta = sample['has_puncta'].numpy()[0]  # (H, W)
+        offset = sample['offset'].numpy()  # (2, H, W)
+        
+        # Get center frame for display
+        center_frame = images[1].cpu().numpy()  # (H, W)
+        
+        # Find ground truth detections
+        gt_y, gt_x = np.where(has_puncta > 0.5)
+        gt_detections = []
+        for y, x in zip(gt_y, gt_x):
+            gt_detections.append({
+                'x': x + offset[0, y, x],
+                'y': y + offset[1, y, x]
+            })
+        
+        # Run prediction
+        with torch.no_grad():
+            images_batch = images.unsqueeze(0).to(device)  # (1, 3, H, W)
+            outputs = model(images_batch)
+        
+        # Get predictions
+        prob = outputs['prob'][0, 0].cpu().numpy()  # (H, W)
+        pred_offset = outputs['offset'][0].cpu().numpy()  # (2, H, W)
+        
+        # Find predicted detections
+        det_mask = prob > threshold
+        det_y, det_x = np.where(det_mask)
+        pred_detections = []
+        for y, x in zip(det_y, det_x):
+            pred_detections.append({
+                'x': x + pred_offset[0, y, x],
+                'y': y + pred_offset[1, y, x],
+                'prob': prob[y, x]
+            })
+        
+        # Match detections to classify TP/FP/FN
+        matches, tp_idx, fp_idx, fn_idx = match_detections(
+            pred_detections, gt_detections, max_distance=3.0
+        )
+        
+        # Plot
+        ax = axes[plot_idx]
+        
+        # Show image with enhanced contrast
+        vmin, vmax = np.percentile(center_frame, [1, 99])
+        ax.imshow(center_frame, cmap='gray', vmin=vmin, vmax=vmax)
+        
+        # Plot detections with classification
+        # True Positives (green circles)
+        if len(tp_idx) > 0:
+            tp_x = [pred_detections[i]['x'] for i in tp_idx]
+            tp_y = [pred_detections[i]['y'] for i in tp_idx]
+            ax.scatter(tp_x, tp_y, s=150, facecolors='none', 
+                      edgecolors='#2ecc71', linewidths=2, 
+                      label=f'TP ({len(tp_idx)})', marker='o')
+        
+        # False Positives (red X)
+        if len(fp_idx) > 0:
+            fp_x = [pred_detections[i]['x'] for i in fp_idx]
+            fp_y = [pred_detections[i]['y'] for i in fp_idx]
+            ax.scatter(fp_x, fp_y, s=150, c='#e74c3c', 
+                      marker='x', linewidths=2.5,
+                      label=f'FP ({len(fp_idx)})')
+        
+        # False Negatives (yellow squares)
+        if len(fn_idx) > 0:
+            fn_x = [gt_detections[i]['x'] for i in fn_idx]
+            fn_y = [gt_detections[i]['y'] for i in fn_idx]
+            ax.scatter(fn_x, fn_y, s=150, facecolors='none',
+                      edgecolors='#f39c12', linewidths=2,
+                      label=f'FN ({len(fn_idx)})', marker='s')
+        
+        # Title with metrics
+        precision = len(tp_idx) / len(pred_detections) if len(pred_detections) > 0 else 0
+        recall = len(tp_idx) / len(gt_detections) if len(gt_detections) > 0 else 0
+        
+        ax.set_title(f'Sample {sample_idx}\n' + 
+                    f'P={precision:.2f}, R={recall:.2f} | ' +
+                    f'GT={len(gt_detections)}, Pred={len(pred_detections)}',
+                    fontsize=10, fontweight='bold')
+        ax.legend(loc='upper right', fontsize=8, framealpha=0.8)
+        ax.axis('off')
+    
+    # Hide unused subplots
+    for idx in range(len(sample_indices), len(axes)):
+        axes[idx].axis('off')
+    
+    plt.suptitle('Visual Inspection: Detections Overlaid on Images\n' +
+                'Green circles = True Positives | Red X = False Positives | Yellow squares = False Negatives',
+                fontsize=14, fontweight='bold', y=0.995)
+    
+    plt.tight_layout()
+    plt.savefig(output_dir / 'visual_inspection.png', dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"✅ Visual inspection plot saved: {output_dir / 'visual_inspection.png'}")
+    
+    # Also create a detailed view of best and worst samples
+    create_detailed_inspection(model, dataset, output_dir, device, threshold)
+
+
+def create_detailed_inspection(model, dataset, output_dir, device='cpu', threshold=0.5):
+    """Create detailed inspection of best/worst performing samples."""
+    
+    print(f"Creating detailed inspection plots...")
+    
+    # Evaluate all samples to find best/worst
+    sample_scores = []
+    
+    for idx in range(min(len(dataset), 50)):  # Check first 50 samples
+        sample = dataset[idx]
+        images = sample['images']
+        has_puncta = sample['has_puncta'].numpy()[0]
+        offset = sample['offset'].numpy()
+        
+        # Ground truth
+        gt_y, gt_x = np.where(has_puncta > 0.5)
+        gt_detections = []
+        for y, x in zip(gt_y, gt_x):
+            gt_detections.append({'x': x + offset[0, y, x], 'y': y + offset[1, y, x]})
+        
+        # Predict
+        with torch.no_grad():
+            images_batch = images.unsqueeze(0).to(device)
+            outputs = model(images_batch)
+        
+        prob = outputs['prob'][0, 0].cpu().numpy()
+        pred_offset = outputs['offset'][0].cpu().numpy()
+        
+        det_mask = prob > threshold
+        det_y, det_x = np.where(det_mask)
+        pred_detections = []
+        for y, x in zip(det_y, det_x):
+            pred_detections.append({'x': x + pred_offset[0, y, x], 'y': y + pred_offset[1, y, x]})
+        
+        # Calculate F1
+        matches, tp_idx, fp_idx, fn_idx = match_detections(pred_detections, gt_detections, 3.0)
+        precision = len(tp_idx) / len(pred_detections) if len(pred_detections) > 0 else 0
+        recall = len(tp_idx) / len(gt_detections) if len(gt_detections) > 0 else 0
+        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
+        
+        sample_scores.append({
+            'idx': idx,
+            'f1': f1,
+            'precision': precision,
+            'recall': recall,
+            'n_gt': len(gt_detections),
+            'n_pred': len(pred_detections)
+        })
+    
+    # Sort by F1
+    sample_scores.sort(key=lambda x: x['f1'])
+    
+    # Get best and worst 3
+    worst_samples = sample_scores[:3]
+    best_samples = sample_scores[-3:]
+    
+    # Create detailed plot
+    fig, axes = plt.subplots(2, 3, figsize=(18, 12))
+    
+    # Plot worst samples (top row)
+    for col_idx, sample_info in enumerate(worst_samples):
+        plot_detailed_sample(model, dataset, sample_info['idx'], axes[0, col_idx], 
+                           device, threshold, f"Worst #{col_idx+1}")
+    
+    # Plot best samples (bottom row)
+    for col_idx, sample_info in enumerate(best_samples):
+        plot_detailed_sample(model, dataset, sample_info['idx'], axes[1, col_idx],
+                           device, threshold, f"Best #{col_idx+1}")
+    
+    plt.suptitle('Detailed Inspection: Best vs Worst Performing Samples',
+                fontsize=14, fontweight='bold')
+    
+    plt.tight_layout()
+    plt.savefig(output_dir / 'best_worst_samples.png', dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"✅ Detailed inspection plot saved: {output_dir / 'best_worst_samples.png'}")
+
+
+def plot_detailed_sample(model, dataset, sample_idx, ax, device='cpu', threshold=0.5, title_prefix=""):
+    """Plot a single sample with detections."""
+    
+    sample = dataset[sample_idx]
+    images = sample['images']
+    has_puncta = sample['has_puncta'].numpy()[0]
+    offset = sample['offset'].numpy()
+    
+    center_frame = images[1].cpu().numpy()
+    
+    # Ground truth
+    gt_y, gt_x = np.where(has_puncta > 0.5)
+    gt_detections = []
+    for y, x in zip(gt_y, gt_x):
+        gt_detections.append({'x': x + offset[0, y, x], 'y': y + offset[1, y, x]})
+    
+    # Predict
+    with torch.no_grad():
+        images_batch = images.unsqueeze(0).to(device)
+        outputs = model(images_batch)
+    
+    prob = outputs['prob'][0, 0].cpu().numpy()
+    pred_offset = outputs['offset'][0].cpu().numpy()
+    
+    det_mask = prob > threshold
+    det_y, det_x = np.where(det_mask)
+    pred_detections = []
+    for y, x in zip(det_y, det_x):
+        pred_detections.append({'x': x + pred_offset[0, y, x], 'y': y + pred_offset[1, y, x]})
+    
+    # Match
+    matches, tp_idx, fp_idx, fn_idx = match_detections(pred_detections, gt_detections, 3.0)
+    
+    # Plot
+    vmin, vmax = np.percentile(center_frame, [1, 99])
+    ax.imshow(center_frame, cmap='gray', vmin=vmin, vmax=vmax)
+    
+    # TP
+    if len(tp_idx) > 0:
+        tp_x = [pred_detections[i]['x'] for i in tp_idx]
+        tp_y = [pred_detections[i]['y'] for i in tp_idx]
+        ax.scatter(tp_x, tp_y, s=150, facecolors='none', edgecolors='#2ecc71', 
+                  linewidths=2, label=f'TP ({len(tp_idx)})', marker='o')
+    
+    # FP
+    if len(fp_idx) > 0:
+        fp_x = [pred_detections[i]['x'] for i in fp_idx]
+        fp_y = [pred_detections[i]['y'] for i in fp_idx]
+        ax.scatter(fp_x, fp_y, s=150, c='#e74c3c', marker='x', linewidths=2.5,
+                  label=f'FP ({len(fp_idx)})')
+    
+    # FN
+    if len(fn_idx) > 0:
+        fn_x = [gt_detections[i]['x'] for i in fn_idx]
+        fn_y = [gt_detections[i]['y'] for i in fn_idx]
+        ax.scatter(fn_x, fn_y, s=150, facecolors='none', edgecolors='#f39c12',
+                  linewidths=2, label=f'FN ({len(fn_idx)})', marker='s')
+    
+    # Metrics
+    precision = len(tp_idx) / len(pred_detections) if len(pred_detections) > 0 else 0
+    recall = len(tp_idx) / len(gt_detections) if len(gt_detections) > 0 else 0
+    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
+    
+    ax.set_title(f'{title_prefix} - Sample {sample_idx}\n' +
+                f'F1={f1:.3f} (P={precision:.2f}, R={recall:.2f})',
+                fontsize=10, fontweight='bold')
+    ax.legend(loc='upper right', fontsize=8, framealpha=0.8)
+    ax.axis('off')
+
+
 def main():
     parser = argparse.ArgumentParser(description='Evaluate trained DECODE model')
     parser.add_argument('--model', type=str, required=True,
@@ -481,6 +767,9 @@ def main():
     # Load model
     model = load_model(args.model, device)
     
+    # Load dataset for visual inspection
+    dataset = DECODEDataset(args.data)
+    
     # Evaluate
     results = evaluate_model(
         model, args.data, device, 
@@ -517,14 +806,21 @@ def main():
         'data_path': args.data,
         'num_samples': args.num_samples,
         'threshold': args.threshold,
-        'detection': results['detection'],
+        'detection': {
+            'precision': float(results['detection']['precision']),
+            'recall': float(results['detection']['recall']),
+            'f1': float(results['detection']['f1']),
+            'tp': int(results['detection']['tp']),
+            'fp': int(results['detection']['fp']),
+            'fn': int(results['detection']['fn'])
+        },
         'localization': {
-            'rmse_nm': results['localization']['rmse_nm'],
-            'mean_error_nm': results['localization']['mean_error_nm'],
-            'median_error_nm': results['localization']['median_error_nm']
+            'rmse_nm': float(results['localization']['rmse_nm']),
+            'mean_error_nm': float(results['localization']['mean_error_nm']),
+            'median_error_nm': float(results['localization']['median_error_nm'])
         },
         'photons': {
-            'mean_error': results['photons']['mean_error']
+            'mean_error': float(results['photons']['mean_error'])
         }
     }
     
@@ -541,6 +837,9 @@ def main():
     # Generate plots
     plot_results(results, output_dir)
     
+    # Generate visual inspection plots
+    plot_visual_inspection(model, dataset, output_dir, device, threshold=args.threshold, num_samples=6)
+    
     print(f"\n{'='*70}")
     print("EVALUATION COMPLETE!")
     print(f"{'='*70}")
@@ -551,6 +850,8 @@ def main():
     print(f"  - detection_performance.png")
     print(f"  - localization_errors.png")
     print(f"  - per_sample_analysis.png")
+    print(f"  - visual_inspection.png (NEW!)")
+    print(f"  - best_worst_samples.png (NEW!)")
 
 
 if __name__ == '__main__':

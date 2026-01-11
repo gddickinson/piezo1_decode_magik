@@ -111,8 +111,10 @@ class TrackGenerator:
 def generate_synthetic_movie(num_tracks=10,
                             num_frames=100,
                             image_size=(512, 512),
-                            photons_mean=1000,
-                            photons_std=200,
+                            photons_mean=2000,  # Increased from 1000
+                            photons_std=400,     # Increased from 200
+                            baseline=100,        # Camera baseline
+                            read_noise=10,       # Read noise
                             with_blinking=True,
                             output_dir=None):
     """
@@ -181,7 +183,7 @@ def generate_synthetic_movie(num_tracks=10,
     # Add noise
     movie_noisy = np.zeros((T, H, W), dtype=np.uint16)
     for t in range(T):
-        movie_noisy[t] = add_noise(movie[t], baseline=100, read_noise=5)
+        movie_noisy[t] = add_noise(movie[t], baseline=baseline, read_noise=read_noise)
     
     # Create DataFrame
     tracks_df = pd.DataFrame(all_detections)
@@ -204,6 +206,8 @@ def generate_synthetic_movie(num_tracks=10,
             'image_size': list(image_size),
             'photons_mean': photons_mean,
             'photons_std': photons_std,
+            'baseline': baseline,
+            'read_noise': read_noise,
             'with_blinking': with_blinking
         }
         

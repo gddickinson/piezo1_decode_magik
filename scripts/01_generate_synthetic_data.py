@@ -27,16 +27,22 @@ def main():
     parser = argparse.ArgumentParser(description='Generate synthetic training data')
     parser.add_argument('--output', type=str, required=True,
                         help='Output directory')
-    parser.add_argument('--num_samples', type=int, default=1000,
-                        help='Number of movies to generate')
-    parser.add_argument('--num_tracks', type=int, default=10,
-                        help='Number of tracks per movie')
+    parser.add_argument('--num_samples', type=int, default=200,
+                        help='Number of movies to generate (increased for better training)')
+    parser.add_argument('--num_tracks', type=int, default=20,
+                        help='Number of tracks per movie (increased for class balance)')
     parser.add_argument('--num_frames', type=int, default=100,
                         help='Frames per movie')
-    parser.add_argument('--image_size', type=int, nargs=2, default=[512, 512],
-                        help='Image size (H W)')
-    parser.add_argument('--photons_mean', type=int, default=1000,
-                        help='Mean photon count')
+    parser.add_argument('--image_size', type=int, nargs=2, default=[256, 256],
+                        help='Image size (H W) - smaller = faster training')
+    parser.add_argument('--photons_mean', type=int, default=2000,
+                        help='Mean photon count (increased for better visibility)')
+    parser.add_argument('--photons_std', type=int, default=400,
+                        help='Photon count std deviation')
+    parser.add_argument('--baseline', type=int, default=100,
+                        help='Camera baseline (ADU)')
+    parser.add_argument('--read_noise', type=int, default=10,
+                        help='Camera read noise (electrons)')
     parser.add_argument('--with_blinking', action='store_true',
                         help='Add blinking dynamics')
     
@@ -66,7 +72,9 @@ def main():
             num_frames=args.num_frames,
             image_size=tuple(args.image_size),
             photons_mean=args.photons_mean,
-            photons_std=200,
+            photons_std=args.photons_std,
+            baseline=args.baseline,
+            read_noise=args.read_noise,
             with_blinking=args.with_blinking,
             output_dir=sample_dir
         )

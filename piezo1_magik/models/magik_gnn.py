@@ -1,34 +1,25 @@
 """
-MAGIK-style Graph Neural Network for Particle Tracking
+MAGIK Graph Neural Network for Particle Tracking
 
-Based on graph neural networks where:
-- Nodes = detected puncta
-- Edges = potential links between frames
-- GNN learns edge probabilities
-- Linking via global optimization
-
-Architecture inspired by:
-- MAGIK (DeepTrack 2.0)
-- Trackastra (Transformer-based tracking)
+Implements EdgeConv-style GNN for learning to link detections into tracks.
+No external dependencies beyond PyTorch!
 """
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import MessagePassing, global_mean_pool
-from torch_geometric.utils import add_self_loops
 
 
-class EdgeConv(MessagePassing):
+class EdgeConvLayer(nn.Module):
     """
-    Edge convolution layer for learning edge features.
+    EdgeConv layer for graph neural networks.
     
-    Aggregates features from neighboring nodes.
+    Implements message passing along edges without torch_geometric dependency.
     """
     
     def __init__(self, in_channels, out_channels):
-        super().__init__(aggr='max')  # Max aggregation
-        
+        super().__init__()
+        # MLP for edge features
         self.mlp = nn.Sequential(
             nn.Linear(2 * in_channels, out_channels),
             nn.BatchNorm1d(out_channels),
@@ -40,46 +31,64 @@ class EdgeConv(MessagePassing):
     
     def forward(self, x, edge_index):
         """
+        Forward pass.
+        
         Args:
             x: (N, in_channels) node features
-            edge_index: (2, E) edge connections
+            edge_index: (2, E) edge connections [source, target]
+            
         Returns:
-            out: (N, out_channels) updated node features
+            x_out: (N, out_channels) updated node features
         """
-        return self.propagate(edge_index, x=x)
-    
-    def message(self, x_i, x_j):
-        """
-        Create messages from neighboring nodes.
+        src, dst = edge_index  # (E,), (E,)
         
-        Args:
-            x_i: Features of target nodes
-            x_j: Features of source nodes
-        Returns:
-            messages: Updated edge features
-        """
-        # Concatenate features
-        edge_features = torch.cat([x_i, x_j], dim=1)
+        # Get source and destination features
+        x_src = x[src]  # (E, in_channels)
+        x_dst = x[dst]  # (E, in_channels)
+        
+        # Concatenate for each edge
+        edge_features = torch.cat([x_src, x_dst], dim=1)  # (E, 2*in_channels)
         
         # Apply MLP
-        return self.mlp(edge_features)
+        edge_updates = self.mlp(edge_features)  # (E, out_channels)
+        
+        # Aggregate to destination nodes using scatter_add (sum aggregation)
+        # This is more stable than max for gradient computation
+        x_out = torch.zeros(x.shape[0], edge_updates.shape[1], 
+                           device=x.device, dtype=x.dtype)
+        
+        # Use index_add instead of in-place loop (MPS compatible)
+        x_out.index_add_(0, dst, edge_updates)
+        
+        return x_out
 
 
 class MAGIKNet(nn.Module):
     """
-    Graph Neural Network for particle linking.
+    MAGIK Graph Neural Network for particle tracking.
     
-    Learns to predict which detections should be linked across frames.
+    Predicts which edges represent true particle links.
     """
     
-    def __init__(self,
-                 node_features=6,  # x, y, t, intensity, σx, σy
-                 edge_features=4,  # Δx, Δy, Δt, distance
-                 hidden_dim=128,
-                 num_layers=3):
+    def __init__(self, node_features=5, edge_features=4, 
+                 hidden_dim=64, num_layers=3):
+        """
+        Initialize MAGIK.
+        
+        Args:
+            node_features: Number of node features (frame, x, y, prob, photons)
+            edge_features: Number of edge features (dx, dy, distance, temporal_gap)
+            hidden_dim: Hidden dimension
+            num_layers: Number of EdgeConv layers
+        """
         super().__init__()
         
-        # Node feature encoder
+        self.node_features = node_features
+        self.edge_features = edge_features
+        self.hidden_dim = hidden_dim
+        self.num_layers = num_layers
+        
+        # Node embedding
         self.node_encoder = nn.Sequential(
             nn.Linear(node_features, hidden_dim),
             nn.BatchNorm1d(hidden_dim),
@@ -89,19 +98,21 @@ class MAGIKNet(nn.Module):
             nn.ReLU()
         )
         
-        # Edge feature encoder
+        # Edge feature embedding
         self.edge_encoder = nn.Sequential(
             nn.Linear(edge_features, hidden_dim),
             nn.BatchNorm1d(hidden_dim),
             nn.ReLU()
         )
         
-        # Graph convolution layers
+        # EdgeConv layers
         self.conv_layers = nn.ModuleList([
-            EdgeConv(hidden_dim, hidden_dim) for _ in range(num_layers)
+            EdgeConvLayer(hidden_dim, hidden_dim)
+            for _ in range(num_layers)
         ])
         
         # Edge classifier
+        # Takes: [node_src, node_dst, edge_features, difference]
         self.edge_classifier = nn.Sequential(
             nn.Linear(2 * hidden_dim + edge_features, hidden_dim),
             nn.BatchNorm1d(hidden_dim),
@@ -111,7 +122,7 @@ class MAGIKNet(nn.Module):
             nn.BatchNorm1d(hidden_dim // 2),
             nn.ReLU(),
             nn.Dropout(0.2),
-            nn.Linear(hidden_dim // 2, 1)  # Binary: link or not
+            nn.Linear(hidden_dim // 2, 1)  # Output logit (before sigmoid)
         )
     
     def forward(self, node_features, edge_index, edge_features):
@@ -119,185 +130,162 @@ class MAGIKNet(nn.Module):
         Forward pass.
         
         Args:
-            node_features: (N, node_features) node attributes
-            edge_index: (2, E) edge connectivity
-            edge_features: (E, edge_features) edge attributes
+            node_features: (N, node_features) detection features
+            edge_index: (2, E) edge connections
+            edge_features: (E, edge_features) edge features
             
         Returns:
-            edge_probs: (E,) probability that each edge is a link
+            edge_logits: (E,) predicted edge logits (apply sigmoid for probabilities)
         """
-        
-        # Encode node features
+        # Encode nodes
         x = self.node_encoder(node_features)  # (N, hidden_dim)
         
-        # Encode edge features
-        edge_attr = self.edge_encoder(edge_features)  # (E, hidden_dim)
+        # Encode edges (only if we have edges)
+        if edge_features.shape[0] > 0:
+            edge_emb = self.edge_encoder(edge_features)  # (E, hidden_dim)
+        else:
+            edge_emb = torch.zeros((0, self.hidden_dim), device=node_features.device)
         
-        # Graph convolutions (message passing)
+        # Apply EdgeConv layers
         for conv in self.conv_layers:
-            x = conv(x, edge_index) + x  # Residual connection
+            if edge_index.shape[1] > 0:  # Only if we have edges
+                x_update = conv(x, edge_index)
+                x = x + x_update  # Residual connection
+                x = F.relu(x)
         
-        # For each edge, concatenate source/target node features + edge features
+        # Get edge predictions
+        if edge_index.shape[1] == 0:
+            return torch.zeros(0, device=node_features.device)
+        
         src, dst = edge_index
-        edge_input = torch.cat([
-            x[src],
-            x[dst],
-            edge_features
-        ], dim=1)  # (E, 2*hidden_dim + edge_features)
+        x_src = x[src]  # (E, hidden_dim)
+        x_dst = x[dst]  # (E, hidden_dim)
         
-        # Classify edges
-        logits = self.edge_classifier(edge_input)  # (E, 1)
-        probs = torch.sigmoid(logits.squeeze())  # (E,)
+        # Concatenate all edge information
+        edge_input = torch.cat([x_src, x_dst, edge_features], dim=1)  # (E, 2*hidden_dim + edge_features)
         
-        return probs
-    
-    def predict_links(self, node_features, edge_index, edge_features, threshold=0.5):
-        """
-        Predict which edges are actual links.
+        # Predict edge probabilities
+        edge_logits = self.edge_classifier(edge_input).squeeze(-1)  # (E,)
         
-        Args:
-            node_features: Node features
-            edge_index: Candidate edges
-            edge_features: Edge features
-            threshold: Probability threshold
-            
-        Returns:
-            links: (M, 2) array of linked node pairs
-            probs: (M,) probabilities for each link
-        """
-        probs = self.forward(node_features, edge_index, edge_features)
-        
-        # Select edges above threshold
-        mask = probs > threshold
-        links = edge_index[:, mask].t()
-        link_probs = probs[mask]
-        
-        return links.cpu().numpy(), link_probs.cpu().numpy()
+        return edge_logits
 
 
-def build_tracking_graph(detections_per_frame, max_frame_gap=5, max_distance=10.0):
+def build_tracking_graph(detections, max_temporal_gap=2, max_spatial_distance=30):
     """
-    Build tracking graph from detections.
+    Build temporal graph from detections.
     
     Args:
-        detections_per_frame: List[List[Dict]] - detections per frame
-            Each detection: {'x', 'y', 'photons', 'sigma_x', 'sigma_y'}
-        max_frame_gap: Maximum frames to link across
-        max_distance: Maximum spatial distance to consider
+        detections: List of dicts with keys: frame, x, y, prob, photons
+        max_temporal_gap: Maximum frame gap for edges
+        max_spatial_distance: Maximum spatial distance for edges
         
     Returns:
-        node_features: (N, 6) tensor [x, y, t, intensity, σx, σy]
+        node_features: (N, 5) tensor
         edge_index: (2, E) tensor
-        edge_features: (E, 4) tensor [Δx, Δy, Δt, distance]
-        node_to_detection: List mapping node index to (frame, det_idx)
+        edge_features: (E, 4) tensor
     """
+    if len(detections) == 0:
+        return (torch.zeros((0, 5)), 
+                torch.zeros((2, 0), dtype=torch.long),
+                torch.zeros((0, 4)))
     
-    # Build nodes
-    node_features = []
-    node_to_detection = []
+    # Create node features
+    N = len(detections)
+    node_features = torch.zeros((N, 5))
     
-    for frame_idx, detections in enumerate(detections_per_frame):
-        for det_idx, det in enumerate(detections):
-            node_features.append([
-                det['x'],
-                det['y'],
-                float(frame_idx),
-                det['photons'],
-                det['sigma_x'],
-                det['sigma_y']
-            ])
-            node_to_detection.append((frame_idx, det_idx))
+    for i, det in enumerate(detections):
+        node_features[i] = torch.tensor([
+            det['frame'],
+            det['x'],
+            det['y'],
+            det.get('prob', 1.0),
+            det.get('photons', 1000.0)
+        ])
     
-    node_features = torch.tensor(node_features, dtype=torch.float32)
+    # Build edges
+    edge_list = []
+    edge_feat_list = []
     
-    # Build edges (candidate links)
-    edges = []
-    edge_features_list = []
+    # Group by frame
+    frame_to_nodes = {}
+    for i, det in enumerate(detections):
+        frame = det['frame']
+        if frame not in frame_to_nodes:
+            frame_to_nodes[frame] = []
+        frame_to_nodes[frame].append(i)
     
-    num_nodes = len(node_features)
+    frames = sorted(frame_to_nodes.keys())
     
-    for i in range(num_nodes):
-        frame_i, _ = node_to_detection[i]
-        x_i, y_i = node_features[i, 0], node_features[i, 1]
-        
-        for j in range(i + 1, num_nodes):
-            frame_j, _ = node_to_detection[j]
+    # Connect nearby frames
+    for i, frame in enumerate(frames):
+        for j in range(i + 1, min(i + 1 + max_temporal_gap, len(frames))):
+            next_frame = frames[j]
+            temporal_gap = next_frame - frame
             
-            # Only link forward in time within max_frame_gap
-            frame_gap = frame_j - frame_i
-            if frame_gap <= 0 or frame_gap > max_frame_gap:
-                continue
+            if temporal_gap > max_temporal_gap:
+                break
             
-            x_j, y_j = node_features[j, 0], node_features[j, 1]
-            
-            # Compute distance
-            dx = x_j - x_i
-            dy = y_j - y_i
-            distance = torch.sqrt(dx**2 + dy**2)
-            
-            # Only consider nearby particles
-            if distance > max_distance:
-                continue
-            
-            # Add edge
-            edges.append([i, j])
-            edge_features_list.append([
-                dx.item(),
-                dy.item(),
-                float(frame_gap),
-                distance.item()
-            ])
+            # Connect all pairs within distance
+            for src_node in frame_to_nodes[frame]:
+                src_x = detections[src_node]['x']
+                src_y = detections[src_node]['y']
+                
+                for dst_node in frame_to_nodes[next_frame]:
+                    dst_x = detections[dst_node]['x']
+                    dst_y = detections[dst_node]['y']
+                    
+                    dx = dst_x - src_x
+                    dy = dst_y - src_y
+                    distance = (dx**2 + dy**2)**0.5
+                    
+                    if distance <= max_spatial_distance:
+                        edge_list.append([src_node, dst_node])
+                        edge_feat_list.append([dx, dy, distance, temporal_gap])
     
-    if len(edges) == 0:
-        # No edges - return empty graph
-        edge_index = torch.zeros((2, 0), dtype=torch.long)
-        edge_features = torch.zeros((0, 4), dtype=torch.float32)
-    else:
-        edge_index = torch.tensor(edges, dtype=torch.long).t()
-        edge_features = torch.tensor(edge_features_list, dtype=torch.float32)
+    if len(edge_list) == 0:
+        return (node_features,
+                torch.zeros((2, 0), dtype=torch.long),
+                torch.zeros((0, 4)))
     
-    return node_features, edge_index, edge_features, node_to_detection
+    edge_index = torch.tensor(edge_list, dtype=torch.long).t()
+    edge_features = torch.tensor(edge_feat_list, dtype=torch.float32)
+    
+    return node_features, edge_index, edge_features
 
 
-# Test the GNN
+# Test
 if __name__ == '__main__':
     import numpy as np
     
-    print("Testing MAGIK GNN...")
+    print("Testing MAGIK GNN (no torch_geometric)...")
     
     # Create model
     model = MAGIKNet(
-        node_features=6,
+        node_features=5,
         edge_features=4,
-        hidden_dim=128,
+        hidden_dim=64,
         num_layers=3
     )
     
     print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
     
     # Create dummy detections
-    detections_per_frame = []
+    detections = []
     for t in range(10):
-        frame_detections = []
-        for i in range(5):  # 5 puncta per frame
-            # Random walk
-            x = 128 + i * 30 + np.random.randn() * 2
-            y = 128 + i * 30 + np.random.randn() * 2
-            
-            frame_detections.append({
+        for i in range(5):  # 5 particles
+            x = 100 + i * 30 + np.random.randn() * 2
+            y = 100 + i * 30 + np.random.randn() * 2
+            detections.append({
+                'frame': t,
                 'x': x,
                 'y': y,
-                'photons': 1000 + np.random.randn() * 100,
-                'sigma_x': 1.0,
-                'sigma_y': 1.0
+                'prob': 0.9,
+                'photons': 1000
             })
-        detections_per_frame.append(frame_detections)
     
     # Build graph
-    node_features, edge_index, edge_features, node_map = build_tracking_graph(
-        detections_per_frame,
-        max_frame_gap=3,
-        max_distance=10.0
+    node_features, edge_index, edge_features = build_tracking_graph(
+        detections, max_temporal_gap=2, max_spatial_distance=30
     )
     
     print(f"\n✅ Graph built:")
@@ -305,18 +293,13 @@ if __name__ == '__main__':
     print(f"  Edges: {edge_index.shape[1]}")
     
     # Forward pass
-    edge_probs = model(node_features, edge_index, edge_features)
+    model.eval()
+    with torch.no_grad():
+        edge_logits = model(node_features, edge_index, edge_features)
+        edge_probs = torch.sigmoid(edge_logits)
     
     print(f"\n✅ Forward pass successful")
     print(f"  Edge probabilities shape: {edge_probs.shape}")
     print(f"  Mean probability: {edge_probs.mean():.3f}")
-    
-    # Predict links
-    links, probs = model.predict_links(
-        node_features, edge_index, edge_features, threshold=0.5
-    )
-    
-    print(f"\n✅ Prediction successful")
-    print(f"  Predicted links: {len(links)}")
     
     print("\n✅ All tests passed!")

@@ -11,7 +11,7 @@ training:
   batch_size: 4
   num_epochs: 30
   weight_decay: 1.0e-5
-  pos_weight: 2.0  # Weight for positive class (same track)
+  pos_weight: 2.0  # Weight for positive class (same track) [was 2.0]
   
 data:
   max_temporal_gap: 2  # Link across up to 2 frames

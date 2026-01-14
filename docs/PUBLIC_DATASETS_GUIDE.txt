@@ -1,0 +1,512 @@
+# Public Datasets Guide
+
+## 📦 **What's Included**
+
+Four download scripts for testing DECODE+MAGIK on public data:
+
+1. **11_download_smlm_challenge.py** - SMLM Challenge 2016 (simulated TIRF)
+2. **12_download_tracking_challenge.py** - Particle Tracking Challenge (benchmark)
+3. **13_download_zenodo_datasets.py** - Zenodo research datasets (real data)
+4. **14_download_all_public_data.py** - Master script (downloads all)
+
+---
+
+## 🚀 **Quick Start: Download Everything**
+
+**One command to download all recommended datasets:**
+
+```bash
+python scripts/14_download_all_public_data.py \
+    --output data/public_datasets
+```
+
+**Time:** ~10-15 minutes  
+**Size:** ~1-2 GB total
+
+---
+
+## 📊 **Available Datasets**
+
+### **1. SMLM Challenge 2016** ⭐ (Best for initial testing)
+
+**What:** Simulated TIRF microscopy with ground truth  
+**Source:** http://bigwww.epfl.ch/smlm/challenge2016/
+
+**Datasets:**
+- `vesicles_low` - Easy, 300 frames, ~15 particles/frame
+- `vesicles_high` - Challenging, 300 frames, ~40 particles/frame
+- `tubules_low` - Microtubule bundles, low density
+- `tubules_high` - Microtubule bundles, high density
+- `microtubules_exp` - Real experimental data, 6000 frames
+
+**Download:**
+```bash
+python scripts/11_download_smlm_challenge.py \
+    --output data/public_datasets/smlm_challenge \
+    --datasets all
+```
+
+**Or specific datasets:**
+```bash
+python scripts/11_download_smlm_challenge.py \
+    --output data/public_datasets/smlm_challenge \
+    --datasets vesicles_low,tubules_low
+```
+
+**Why test on this:**
+- ✅ Similar to your synthetic training data
+- ✅ Ground truth available for validation
+- ✅ Well-characterized blinking/PSF
+- ✅ Benchmark your DECODE performance
+
+---
+
+### **2. Particle Tracking Challenge** ⭐ (Best for tracking validation)
+
+**What:** Simulated particle dynamics with ground truth trajectories  
+**Source:** http://particletracking.github.io/
+
+**Datasets:**
+- `receptor_2d` - Membrane receptor diffusion, 500 frames
+- `vesicles_2d` - Vesicle trafficking, 500 frames
+- `microtubules_2d` - Microtubule plus-end tracking, 500 frames
+
+**Download:**
+```bash
+python scripts/12_download_tracking_challenge.py \
+    --output data/public_datasets/tracking_challenge \
+    --datasets all
+```
+
+**Why test on this:**
+- ✅ Standard benchmark for tracking algorithms
+- ✅ Ground truth tracks for comparison
+- ✅ Various motion patterns (diffusion, directed, etc.)
+- ✅ Validate MAGIK tracking performance
+
+---
+
+### **3. Zenodo Research Datasets** 🔬 (Most realistic)
+
+**What:** Real published research data from peer-reviewed papers  
+**Source:** Various Zenodo repositories
+
+**Datasets:**
+- `nino_vesicles` - TIRF vesicle exocytosis (closest to PIEZO1!)
+- `manzo_spt` - Single particle tracking benchmarks
+- `jungmann_dnapaint` - DNA-PAINT super-resolution
+
+**Setup (creates directories and instructions):**
+```bash
+python scripts/13_download_zenodo_datasets.py \
+    --output data/public_datasets/zenodo
+```
+
+**Note:** Zenodo datasets require **manual download** (see below)
+
+**Why test on this:**
+- ✅ Real experimental data
+- ✅ Published analysis for comparison
+- ✅ Most similar to your PIEZO1 experiments
+- ✅ Final validation before real data
+
+---
+
+## 📖 **Detailed Usage**
+
+### **Option 1: Download All (Recommended)**
+
+```bash
+# Download everything with one command
+python scripts/14_download_all_public_data.py \
+    --output data/public_datasets
+```
+
+**This downloads:**
+- SMLM Challenge: vesicles_low, tubules_low (~200 MB)
+- Tracking Challenge: receptor_2d, vesicles_2d (~100 MB)
+- Zenodo: Setup instructions (manual download)
+
+**Output structure:**
+```
+data/public_datasets/
+├── smlm_challenge/
+│   ├── vesicles_low/
+│   │   ├── sequence.tif
+│   │   ├── groundtruth.csv
+│   │   └── info.txt
+│   └── tubules_low/
+│       ├── sequence.tif
+│       ├── groundtruth.csv
+│       └── info.txt
+├── tracking_challenge/
+│   ├── receptor_2d/
+│   │   ├── 01_Receptor.tif
+│   │   └── 01_GT.txt
+│   └── vesicles_2d/
+│       ├── 02_Vesicles.tif
+│       └── 02_GT.txt
+└── zenodo/
+    ├── DOWNLOAD_INSTRUCTIONS.md
+    ├── nino_vesicles/
+    ├── manzo_spt/
+    └── jungmann_dnapaint/
+```
+
+---
+
+### **Option 2: Download Individually**
+
+**Just SMLM Challenge:**
+```bash
+python scripts/11_download_smlm_challenge.py \
+    --output data/public_datasets/smlm_challenge \
+    --datasets vesicles_low
+```
+
+**Just Tracking Challenge:**
+```bash
+python scripts/12_download_tracking_challenge.py \
+    --output data/public_datasets/tracking_challenge \
+    --datasets receptor_2d
+```
+
+**Setup Zenodo instructions:**
+```bash
+python scripts/13_download_zenodo_datasets.py \
+    --output data/public_datasets/zenodo
+```
+
+---
+
+## 🧪 **Testing Pipeline on Public Data**
+
+### **Test 1: SMLM Vesicles (Easiest)**
+
+**Dataset:** Simulated vesicles, low density, 300 frames
+
+```bash
+python scripts/09_run_complete_pipeline.py \
+    --input data/public_datasets/smlm_challenge/vesicles_low/sequence.tif \
+    --decode checkpoints/decode_optimized/best_model.pth \
+    --magik checkpoints/magik/best_model.pth \
+    --output results/test_smlm_vesicles \
+    --threshold 0.3 \
+    --use_gap_filling \
+    --max_gap 40 \
+    --max_distance 100
+```
+
+**Expected results:**
+```
+Detections: ~4,500 (300 frames × 15 particles)
+Tracks: ~300-400 (after gap-filling)
+Mean track length: ~25-30 detections
+Processing time: ~5-8 minutes
+```
+
+**Check quality:**
+```bash
+open results/test_smlm_vesicles/tracking_overlay.png
+open results/test_smlm_vesicles/track_statistics.png
+```
+
+---
+
+### **Test 2: Tracking Challenge Receptors (Medium)**
+
+**Dataset:** Simulated receptor diffusion, 500 frames
+
+```bash
+python scripts/09_run_complete_pipeline.py \
+    --input data/public_datasets/tracking_challenge/receptor_2d/01_Receptor.tif \
+    --decode checkpoints/decode_optimized/best_model.pth \
+    --magik checkpoints/magik/best_model.pth \
+    --output results/test_receptors \
+    --threshold 0.3 \
+    --use_gap_filling \
+    --max_gap 40 \
+    --max_distance 100
+```
+
+**Expected results:**
+```
+Detections: ~10,000 (500 frames × 20 particles)
+Tracks: ~400-600
+Mean track length: ~30-40 detections
+Processing time: ~10-12 minutes
+```
+
+---
+
+### **Test 3: SMLM Tubules (Challenging)**
+
+**Dataset:** Microtubule bundles, high density
+
+```bash
+python scripts/09_run_complete_pipeline.py \
+    --input data/public_datasets/smlm_challenge/tubules_high/sequence.tif \
+    --decode checkpoints/decode_optimized/best_model.pth \
+    --magik checkpoints/magik/best_model.pth \
+    --output results/test_tubules \
+    --threshold 0.3 \
+    --detection_threshold 0.6 \
+    --use_gap_filling \
+    --max_gap 40 \
+    --max_distance 100
+```
+
+**Note:** Use higher `detection_threshold` (0.6) for dense data to reduce false positives.
+
+---
+
+## 📈 **Comparing to Ground Truth**
+
+### **For SMLM Challenge Datasets:**
+
+```python
+import pandas as pd
+import numpy as np
+
+# Load ground truth
+gt = pd.read_csv('data/public_datasets/smlm_challenge/vesicles_low/groundtruth.csv')
+print(f"GT frames: {gt['frame'].unique()}")
+print(f"GT particles per frame: {gt.groupby('frame').size().mean():.1f}")
+
+# Load your detections
+detections = pd.read_csv('results/test_smlm_vesicles/tracks.csv')
+print(f"Detected particles: {len(detections)}")
+
+# Match detections to GT (within 3 pixels)
+def match_detections(det_frame, gt_frame, threshold=3.0):
+    matches = 0
+    for _, det in det_frame.iterrows():
+        distances = np.sqrt((gt_frame['x'] - det['x'])**2 + 
+                           (gt_frame['y'] - det['y'])**2)
+        if distances.min() < threshold:
+            matches += 1
+    return matches
+
+# Calculate precision/recall per frame
+for frame in range(10):  # First 10 frames
+    gt_frame = gt[gt['frame'] == frame]
+    det_frame = detections[detections['frame'] == frame]
+    
+    matches = match_detections(det_frame, gt_frame)
+    precision = matches / len(det_frame) if len(det_frame) > 0 else 0
+    recall = matches / len(gt_frame) if len(gt_frame) > 0 else 0
+    
+    print(f"Frame {frame}: Precision={precision:.2f}, Recall={recall:.2f}")
+```
+
+**Expected DECODE performance:**
+- Precision: >95%
+- Recall: >97%
+- F1: >96%
+
+---
+
+### **For Tracking Challenge Datasets:**
+
+```python
+import pandas as pd
+
+# Load ground truth tracks
+gt_tracks = pd.read_csv(
+    'data/public_datasets/tracking_challenge/receptor_2d/01_GT.txt',
+    sep='\t', 
+    names=['particle_id', 'frame', 'x', 'y', 'z']
+)
+
+# Load your tracks
+your_tracks = pd.read_csv('results/test_receptors/tracks.csv')
+
+# Compare track counts
+gt_track_count = gt_tracks['particle_id'].nunique()
+your_track_count = your_tracks['track_id'].nunique()
+
+print(f"GT tracks: {gt_track_count}")
+print(f"Your tracks: {your_track_count}")
+print(f"Fragmentation: {your_track_count / gt_track_count:.1f}×")
+
+# Compare track lengths
+gt_lengths = gt_tracks.groupby('particle_id').size()
+your_lengths = your_tracks.groupby('track_id').size()
+
+print(f"\nTrack lengths:")
+print(f"GT mean: {gt_lengths.mean():.1f}")
+print(f"Your mean: {your_lengths.mean():.1f}")
+```
+
+**Expected MAGIK + gap-filling performance:**
+- Fragmentation: 4-6×
+- Track length: 50-70% of GT
+- Good enough for calcium analysis!
+
+---
+
+## 🌐 **Manual Download: Zenodo Datasets**
+
+Zenodo datasets require manual download because:
+- Multiple file versions
+- Large file sizes
+- Need to accept terms
+
+### **Nino et al. Vesicles** (Recommended!)
+
+**Why:** Most similar to PIEZO1 puncta dynamics
+
+**Steps:**
+1. Visit: https://zenodo.org/record/4568300
+2. Click "Files" section
+3. Look for .tif movies (TIRF microscopy data)
+4. Download to: `data/public_datasets/zenodo/nino_vesicles/`
+5. Run pipeline:
+   ```bash
+   python scripts/09_run_complete_pipeline.py \
+       --input data/public_datasets/zenodo/nino_vesicles/movie.tif \
+       --decode checkpoints/decode_optimized/best_model.pth \
+       --magik checkpoints/magik/best_model.pth \
+       --output results/zenodo_nino \
+       --use_gap_filling
+   ```
+
+### **Manzo SPT Benchmark**
+
+**Why:** Standard benchmark for single particle tracking
+
+**Steps:**
+1. Visit: https://zenodo.org/record/3707702
+2. Download trajectory datasets
+3. Save to: `data/public_datasets/zenodo/manzo_spt/`
+
+---
+
+## 🎯 **Recommended Testing Order**
+
+### **Day 1: Easy datasets**
+1. SMLM vesicles_low (~5 min)
+2. Tracking receptor_2d (~10 min)
+3. Compare to ground truth
+
+### **Day 2: Challenging datasets**
+4. SMLM tubules_high (~10 min)
+5. Tracking vesicles_2d (~12 min)
+6. Tune parameters if needed
+
+### **Day 3: Real data**
+7. Download Nino vesicles from Zenodo
+8. Test on real experimental data
+9. Compare to published analysis
+
+### **Day 4: Your PIEZO1 data!**
+10. Run on real PIEZO1 movies
+11. Extract calcium signals
+12. Publish! 🎉
+
+---
+
+## ⚙️ **Parameter Tuning for Different Datasets**
+
+### **If too many false detections:**
+```bash
+--detection_threshold 0.7  # Increase (was 0.5)
+```
+
+### **If missing particles:**
+```bash
+--detection_threshold 0.3  # Decrease (was 0.5)
+```
+
+### **If tracks too fragmented:**
+```bash
+--max_gap 60              # Increase (was 40)
+--max_distance 150        # Increase (was 100)
+```
+
+### **If too many false links:**
+```bash
+--threshold 0.5           # Increase MAGIK threshold (was 0.3)
+```
+
+---
+
+## 📦 **Dataset Sizes & Download Times**
+
+| Dataset | Files | Size | Frames | Download Time |
+|---------|-------|------|--------|---------------|
+| SMLM Vesicles Low | 3 | ~100 MB | 300 | 1-2 min |
+| SMLM Tubules High | 3 | ~120 MB | 300 | 1-2 min |
+| Tracking Receptors | 2 | ~50 MB | 500 | 30 sec |
+| Tracking Vesicles | 2 | ~60 MB | 500 | 1 min |
+| SMLM Microtubules Exp | 1 | ~800 MB | 6000 | 5-10 min |
+
+**Total for all datasets:** ~1-2 GB, ~15-20 minutes
+
+---
+
+## 🎓 **Citations**
+
+### **If you use SMLM Challenge data:**
+
+> Sage D, Pham TA, Babcock H, et al. "Super-resolution fight club: Assessment 
+> of 2D and 3D single-molecule localization microscopy software." 
+> Nature Methods 16, 387–395 (2019). https://doi.org/10.1038/s41592-019-0364-4
+
+### **If you use Particle Tracking Challenge:**
+
+> Chenouard N, Smal I, de Chaumont F, et al. "Objective comparison of particle 
+> tracking methods." Nature Methods 11, 281–289 (2014).
+> https://doi.org/10.1038/nmeth.2808
+
+### **If you use Zenodo datasets:**
+
+Each dataset has its own DOI - cite the original paper.
+
+---
+
+## ✅ **Quick Checklist**
+
+**Before testing:**
+- [ ] DECODE model trained (F1 >98%)
+- [ ] MAGIK model trained (accuracy ~90%)
+- [ ] Gap-filling parameters tuned
+- [ ] Public datasets downloaded
+
+**Testing workflow:**
+- [ ] Test on SMLM vesicles_low
+- [ ] Compare to ground truth
+- [ ] Adjust parameters if needed
+- [ ] Test on tracking challenge
+- [ ] Test on Zenodo real data
+- [ ] Ready for PIEZO1 data!
+
+---
+
+## 🚀 **Start Testing Now!**
+
+**Download everything:**
+```bash
+python scripts/14_download_all_public_data.py \
+    --output data/public_datasets
+```
+
+**Test on easiest dataset:**
+```bash
+python scripts/09_run_complete_pipeline.py \
+    --input data/public_datasets/smlm_challenge/vesicles_low/sequence.tif \
+    --decode checkpoints/decode_optimized/best_model.pth \
+    --magik checkpoints/magik/best_model.pth \
+    --output results/test_public \
+    --use_gap_filling
+```
+
+**Check results:**
+```bash
+open results/test_public/tracking_overlay.png
+cat results/test_public/track_summary.csv
+```
+
+---
+
+**You're ready to validate your pipeline on benchmark data!** 🎯

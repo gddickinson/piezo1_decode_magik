@@ -17,21 +17,34 @@ import tifffile
 class MAGIKDataset(Dataset):
     """
     Dataset for training MAGIK tracking.
-    
-    Loads synthetic data, runs DECODE to get detections, builds graphs.
+
+    Loads synthetic data, runs a trained DECODE model to obtain detections,
+    then builds temporal graphs with ground-truth edge labels for training
+    the MAGIK GNN linker.
+
+    Each sample directory should contain:
+        - movie.tif: (T, H, W) uint16 TIFF stack
+        - ground_truth_tracks.csv: columns [frame, x, y, photons, track_id]
+
+    Returns dicts with keys:
+        - 'node_features': (N, 5) float32 -- [frame, x, y, prob, photons]
+        - 'edge_index': (2, E) long -- directed edges between detections
+        - 'edge_features': (E, 4) float32 -- [dx, dy, distance, temporal_gap]
+        - 'edge_labels': (E,) float32 -- 1.0 if same track, 0.0 otherwise
+        - 'node_tracks': (N,) long -- ground-truth track IDs
     """
-    
-    def __init__(self, data_dir: str, decode_model, device='cpu', 
+
+    def __init__(self, data_dir: str, decode_model, device='cpu',
                  max_temporal_gap=3, max_spatial_distance=50):
         """
         Initialize dataset.
-        
+
         Args:
-            data_dir: Directory with synthetic samples
-            decode_model: Trained DECODE model for getting detections
-            device: Device to run DECODE on
-            max_temporal_gap: Maximum frame gap for linking (typically 1-3)
-            max_spatial_distance: Maximum distance (pixels) for linking
+            data_dir: Directory containing sample_* subdirectories
+            decode_model: Trained DECODENet model used to detect puncta
+            device: Device to run DECODE inference on ('cpu', 'cuda', 'mps')
+            max_temporal_gap: Maximum frame gap for candidate edges (typically 1-3)
+            max_spatial_distance: Maximum pixel distance for candidate edges
         """
         self.data_dir = Path(data_dir)
         self.decode_model = decode_model
@@ -291,9 +304,16 @@ class MAGIKDataset(Dataset):
 
 def collate_graphs(batch: List[Dict]) -> Dict:
     """
-    Collate multiple graphs into a single batch.
-    
-    Uses disjoint union of graphs.
+    Collate multiple graph samples into a single batched graph.
+
+    Uses disjoint union: node features are concatenated and edge indices
+    are offset so that each sub-graph remains internally consistent.
+
+    Args:
+        batch: List of graph dicts from MAGIKDataset.__getitem__
+
+    Returns:
+        Batched graph dict with concatenated tensors.
     """
     # Combine all graphs
     node_features_list = []

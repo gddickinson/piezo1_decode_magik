@@ -16,15 +16,24 @@ from typing import Tuple
 class DECODEDataset(Dataset):
     """
     Dataset for training DECODE.
-    
+
     Loads synthetic movies and creates 3-frame windows with ground truth.
+    Each sample directory should contain:
+        - movie.tif: (T, H, W) uint16 TIFF stack
+        - ground_truth_tracks.csv: columns [frame, x, y, photons, track_id]
+
+    Returns dicts with keys:
+        - 'images': (3, H, W) float32 tensor, normalized to [0, 1]
+        - 'has_puncta': (1, H, W) binary detection mask for center frame
+        - 'offset': (2, H, W) sub-pixel offsets (dx, dy) for center frame
+        - 'photons': (1, H, W) photon counts for center frame
     """
-    
+
     def __init__(self, data_dir: str, transform=None):
         """
         Args:
-            data_dir: Directory with synthetic samples
-            transform: Optional data augmentation
+            data_dir: Directory containing sample_* subdirectories
+            transform: Optional data augmentation (not yet implemented)
         """
         self.data_dir = Path(data_dir)
         self.transform = transform
@@ -119,17 +128,20 @@ def create_dataloaders(data_dir: str,
                       num_workers: int = 4,
                       device: str = 'cpu') -> Tuple:
     """
-    Create train and validation dataloaders.
-    
+    Create train and validation DataLoaders from a synthetic data directory.
+
+    Splits DECODEDataset into train/val subsets (deterministic seed=42)
+    and wraps them in DataLoaders. Pin memory is enabled only for CUDA.
+
     Args:
-        data_dir: Directory with synthetic samples
-        batch_size: Batch size
-        train_split: Fraction for training
-        num_workers: Number of data loading workers
-        device: Device being used (for pin_memory setting)
-        
+        data_dir: Directory containing sample_* subdirectories
+        batch_size: Batch size for both loaders
+        train_split: Fraction of data for training (remainder is validation)
+        num_workers: Number of parallel data-loading workers
+        device: Target device string ('cpu', 'cuda', 'mps')
+
     Returns:
-        train_loader, val_loader
+        Tuple of (train_loader, val_loader)
     """
     
     # Create full dataset

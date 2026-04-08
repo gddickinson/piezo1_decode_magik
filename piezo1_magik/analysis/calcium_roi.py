@@ -49,15 +49,23 @@ class CalciumROIAnalyzer:
                    y: float) -> np.ndarray:
         """
         Extract ROI from image at position (x, y).
-        
+
         Args:
             image: (H, W) image
             x, y: Center position (sub-pixel OK)
-            
+
         Returns:
             roi: (roi_size, roi_size) extracted region
-                 Returns zeros if out of bounds
+                 Returns zeros if out of bounds or inputs invalid
         """
+        # Input validation
+        if image.ndim != 2:
+            raise ValueError(f"Expected 2D image, got shape {image.shape}")
+        if np.isnan(x) or np.isnan(y):
+            return np.zeros((self.roi_size, self.roi_size))
+        if not np.isfinite(x) or not np.isfinite(y):
+            return np.zeros((self.roi_size, self.roi_size))
+
         H, W = image.shape
         
         # Round to nearest pixel
@@ -86,15 +94,25 @@ class CalciumROIAnalyzer:
                      track: pd.DataFrame) -> np.ndarray:
         """
         Extract calcium fluorescence trace for one track.
-        
+
         Args:
             calcium_movie: (T, H, W) calcium channel movie
             track: DataFrame with columns ['frame', 'x', 'y']
-            
+
         Returns:
             trace: (T,) fluorescence intensity trace
                    NaN for frames where track doesn't exist
+
+        Raises:
+            ValueError: If calcium_movie is not 3D or track lacks required columns
         """
+        if calcium_movie.ndim != 3:
+            raise ValueError(f"Expected 3D movie (T, H, W), got shape {calcium_movie.shape}")
+        required_cols = {'frame', 'x', 'y'}
+        missing = required_cols - set(track.columns)
+        if missing:
+            raise ValueError(f"Track DataFrame missing columns: {missing}")
+
         T = calcium_movie.shape[0]
         trace = np.full(T, np.nan)
         

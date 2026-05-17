@@ -295,3 +295,7 @@ george.dickinson@gmail.com
 ---
 
 See `IMPLEMENTATION_GUIDE.md` for detailed instructions!
+
+
+---
+*Built with AI assistance from [Claude (Anthropic)](https://claude.com/).*

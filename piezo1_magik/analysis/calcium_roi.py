@@ -199,6 +199,7 @@ class CalciumROIAnalyzer:
         level = median(ΔF/F₀) and sigma = 1.4826 x median(|ΔF/F₀ - level|) (the MAD, scaled to equal the
         standard deviation for Gaussian noise; robust to the events themselves), a peak must reach
         level + threshold x sigma, and the event extends while ΔF/F₀ stays above level + threshold x sigma / 2.
+        Peaks inside one supra-boundary span count as one event, located at the highest peak.
         Both statistics are taken over the whole trace (frames with a detection), so a slowly drifting
         baseline should be handled through F₀ (baseline_method='rolling').
 
@@ -242,6 +243,12 @@ class CalciumROIAnalyzer:
                 end += 1
 
             duration = end - start + 1
+            if events and events[-1]['frame'] == start and events[-1]['end_frame'] == end:
+                # Another peak of the same supra-threshold span: one event, at its highest peak
+                if valid_trace[peak_idx] > valid_trace[events[-1]['peak_frame']]:
+                    events[-1]['peak_frame'] = int(peak_idx)
+                    events[-1]['amplitude'] = float(dff_trace[peak_idx])
+                continue
             if duration >= min_duration:
                 events.append({
                     'frame': int(start),

@@ -273,7 +273,9 @@ Data and results produced before these fixes are not directly comparable with ne
   F₀ is a low percentile, ΔF/F₀ sits above zero and noise crossed it (16 of 20 detections on the web demo were
   noise). Peaks must now rise threshold × σ above the trace's median, with σ = 1.4826 × MAD (robust noise
   estimate); event edges are at half that height above the median. On the demo: 4 detections inside placed events,
-  2 elsewhere. Event counts in `calcium_events.csv` change.
+  2 elsewhere (one of them is the neighbouring punctum's event reaching into the ROI). Event counts in
+  `calcium_events.csv` change. Several peaks inside one supra-threshold span are now one event (at the highest
+  peak) instead of duplicates with the same start and end.
 - **Linking in `04_run_pipeline.py`.** It joined all edges above `--link_threshold` into connected components (so
   crossing or nearby particles merged into one track, and every unlinked detection became a one-point track). It now
   uses the same greedy one-to-one linking as 03c/07/08/09.

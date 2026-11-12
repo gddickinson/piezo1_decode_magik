@@ -135,7 +135,11 @@ export function detectPeaks(dff, threshold = 2.0, minDuration = 2, minDistance =
     let start = pk, end = pk;
     while (start > 0 && vt[start - 1] > n.boundary) start--;
     while (end < vt.length - 1 && vt[end + 1] > n.boundary) end++;
-    const duration = end - start + 1;
+    const duration = end - start + 1, last = events[events.length - 1];
+    if (last && last.frame === start && last.end_frame === end) {  // same span: one event, at its highest peak
+      if (vt[pk] > vt[last.peak_frame]) { last.peak_frame = pk; last.amplitude = dff[pk]; }
+      continue;
+    }
     if (duration >= minDuration) events.push({ frame: start, peak_frame: pk, amplitude: dff[pk], duration, end_frame: end });
   }
   return events;

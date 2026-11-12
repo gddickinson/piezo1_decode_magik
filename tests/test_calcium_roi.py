@@ -105,3 +105,15 @@ def test_no_events_at_all_when_a_track_reaches_the_image_edge():
     track = pd.DataFrame({'frame': range(60), 'x': xs, 'y': np.full(60, 15.0)})
     r = CalciumROIAnalyzer(roi_size=5).analyze_track(movie, track, track_id=0)
     assert r['events'] == [], r['events']
+
+
+def test_one_event_per_supra_threshold_span():
+    """Regression: two peaks >= min_distance apart inside one long transient were reported as two events with
+    the same start and end frame (the same event counted twice). Now each span is one event, at its highest peak."""
+    rng = np.random.default_rng(2)
+    dff = rng.normal(0, 0.01, 200)
+    dff[100:112] += 0.3
+    dff[102] += 0.05
+    dff[109] += 0.04
+    ev = CalciumROIAnalyzer(roi_size=5).detect_peaks(dff, threshold=3.0, min_distance=5)
+    assert len(ev) == 1 and ev[0]['peak_frame'] == 102 and ev[0]['frame'] == 100 and ev[0]['end_frame'] == 111

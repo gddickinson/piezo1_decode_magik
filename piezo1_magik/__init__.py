@@ -5,5 +5,8 @@ Subpackages:
     data      -- synthetic movie generator and PyTorch datasets
     analysis  -- CalciumROIAnalyzer (ROI traces, dF/F0, event detection)
     utils     -- PSF models and camera noise
+    tracking  -- linking, gap filling, track statistics (NumPy only)
+    pipeline_config -- configs/pipeline.yaml loader for scripts/04_run_pipeline.py
+    web       -- web interface
 See INTERFACE.md for the full navigation map.
 """

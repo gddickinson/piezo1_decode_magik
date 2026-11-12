@@ -73,7 +73,10 @@ def test_params_lists_configs_and_options_with_units():
     row = next(r for r in magik["rows"] if r["key"] == "data.max_spatial_distance")
     assert row["value"] == 30 and row["unit"] == "px" and abs(row["um"] - 3.9) < 1e-9
     s04 = next(s for s in p["scripts"] if s["script"] == "scripts/04_run_pipeline.py")
-    assert any(o["name"] == "--roi_size" and o["default"] == 5 for o in s04["options"])
+    roi = next(o for o in s04["options"] if o["name"] == "--roi_size")
+    assert roi["default"] is None and roi["config_key"] == "calcium.roi_size" and roi["config_value"] == 5
+    pipe = next(c for c in p["configs"] if c["file"].endswith("pipeline.yaml"))
+    assert "04_run_pipeline.py" in pipe["read_by"]
 
 
 def test_roi_endpoint_matches_analyzer_and_validates():

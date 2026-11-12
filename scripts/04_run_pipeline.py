@@ -19,6 +19,8 @@ Usage:
         --magik checkpoints/magik/best_model.pth \\
         --input /path/to/dual/channel/movie.tif \\
         --output results/
+
+    Every other setting comes from configs/pipeline.yaml (--config); options given here override it.
 """
 
 import argparse
@@ -36,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from piezo1_magik.models.decode_net import DECODENet
 from piezo1_magik.models.magik_gnn import MAGIKNet
 from piezo1_magik.tracking.linking import build_candidate_graph, greedy_linking
+from piezo1_magik.pipeline_config import DEFAULT_CONFIG, resolve
 from piezo1_magik.analysis.calcium_roi import CalciumROIAnalyzer, analyze_all_tracks
 
 
@@ -192,51 +195,52 @@ def track_with_magik(detections_per_frame, magik_model, device,
     return tracks_df
 
 
-def analyze_calcium(calcium_movie, tracks_df, roi_size=5):
+def analyze_calcium(calcium_movie, tracks_df, **calcium_options):
     """
     Analyze calcium signals at tracked puncta.
-    
+
     Args:
         calcium_movie: (T, H, W) calcium channel
         tracks_df: Tracks DataFrame
-        roi_size: ROI size for extraction
-        
+        calcium_options: roi_size, baseline_method, baseline_percentile, event_threshold, min_duration,
+            min_distance (passed to analyze_all_tracks)
+
     Returns:
         traces_df: Fluorescence traces
         events_df: Detected events
     """
     print("\nAnalyzing calcium signals...")
-    
-    traces_df, events_df = analyze_all_tracks(
-        calcium_movie,
-        tracks_df,
-        roi_size=roi_size
-    )
-    
+    traces_df, events_df = analyze_all_tracks(calcium_movie, tracks_df, **calcium_options)
     print(f"✅ Extracted {len(traces_df)} trace points")
     print(f"✅ Detected {len(events_df)} calcium events")
-    
     return traces_df, events_df
 
 
-def save_results(output_dir, tracks_df, traces_df, events_df, detections_per_frame):
-    """Save all results."""
+def filter_min_photons(detections_per_frame, min_photons):
+    """Drop detections whose DECODE photon estimate is below min_photons (detection.min_photons)."""
+    return [[d for d in dets if float(d['photons']) >= min_photons] for dets in detections_per_frame]
+
+
+def save_results(output_dir, tracks_df, traces_df, events_df, detections_per_frame,
+                 save_tracks=True, save_calcium_traces=True, save_events=True):
+    """Save results (output.save_* in pipeline.yaml choose the CSVs); summary.json is always written."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     
     # Save tracks
-    tracks_csv = output_dir / 'tracks.csv'
-    tracks_df.to_csv(tracks_csv, index=False)
-    print(f"\n💾 Saved tracks: {tracks_csv}")
+    if save_tracks:
+        tracks_csv = output_dir / 'tracks.csv'
+        tracks_df.to_csv(tracks_csv, index=False)
+        print(f"\n💾 Saved tracks: {tracks_csv}")
     
     # Save calcium traces
-    if len(traces_df) > 0:
+    if save_calcium_traces and len(traces_df) > 0:
         traces_csv = output_dir / 'calcium_traces.csv'
         traces_df.to_csv(traces_csv, index=False)
         print(f"💾 Saved calcium traces: {traces_csv}")
     
     # Save calcium events
-    if len(events_df) > 0:
+    if save_events and len(events_df) > 0:
         events_csv = output_dir / 'calcium_events.csv'
         events_df.to_csv(events_csv, index=False)
         print(f"💾 Saved calcium events: {events_csv}")
@@ -277,53 +281,76 @@ def save_results(output_dir, tracks_df, traces_df, events_df, detections_per_fra
     print(f"💾 Saved summary: {summary_json}")
 
 
-def main():
+def build_parser():
+    """Command-line options; each one left out takes its value from --config (configs/pipeline.yaml)."""
     parser = argparse.ArgumentParser(description='Run complete PIEZO1 analysis pipeline')
-    parser.add_argument('--decode', type=str, required=True,
-                        help='Path to DECODE model checkpoint')
-    parser.add_argument('--magik', type=str, required=True,
-                        help='Path to MAGIK model checkpoint')
+    parser.add_argument('--config', type=str, default=str(DEFAULT_CONFIG),
+                        help='Pipeline YAML (default configs/pipeline.yaml); options below override it')
     parser.add_argument('--input', type=str, required=True,
                         help='Input dual-channel movie (TIFF)')
     parser.add_argument('--output', type=str, default='results',
                         help='Output directory')
-    parser.add_argument('--detection_threshold', type=float, default=0.5,
-                        help='DECODE detection threshold')
-    parser.add_argument('--link_threshold', type=float, default=0.5,
-                        help='MAGIK linking threshold')
-    parser.add_argument('--max_distance', type=float, default=10.0,
-                        help='Maximum linking distance (pixels)')
-    parser.add_argument('--roi_size', type=int, default=5,
-                        help='ROI size for calcium extraction')
+    parser.add_argument('--decode', type=str, help='DECODE checkpoint (models.decode)')
+    parser.add_argument('--magik', type=str, help='MAGIK checkpoint (models.magik)')
+    parser.add_argument('--detection_threshold', type=float, help='DECODE detection threshold (detection.threshold)')
+    parser.add_argument('--min_photons', type=float, help='Minimum photons per detection (detection.min_photons)')
+    parser.add_argument('--max_frame_gap', type=int, help='Maximum frames to link across (tracking.max_frame_gap)')
+    parser.add_argument('--max_distance', type=float,
+                        help='Maximum linking distance (pixels) (tracking.max_distance)')
+    parser.add_argument('--link_threshold', type=float, help='MAGIK linking threshold (tracking.link_threshold)')
+    parser.add_argument('--roi_size', type=int, help='ROI size for calcium extraction (calcium.roi_size)')
+    parser.add_argument('--baseline_method', type=str, choices=['percentile', 'rolling', 'mean'],
+                        help='F0 method (calcium.baseline_method)')
+    parser.add_argument('--baseline_percentile', type=float, help='F0 percentile (calcium.baseline_percentile)')
+    parser.add_argument('--event_threshold', type=float,
+                        help='Event threshold, x robust sigma above median dF/F0 (calcium.event_threshold)')
+    parser.add_argument('--min_duration', type=int, help='Minimum event duration (frames) (calcium.min_duration)')
+    parser.add_argument('--min_distance', type=int, help='Minimum frames between events (calcium.min_distance)')
+    for name in ('save_tracks', 'save_calcium_traces', 'save_events'):
+        parser.add_argument(f'--{name}', action=argparse.BooleanOptionalAction, default=None,
+                            help=f'Write the CSV (output.{name})')
+    parser.add_argument('--device', type=str, choices=['cuda', 'mps', 'cpu'], help='Preferred device (processing.device)')
     parser.add_argument('--gpu', type=int, default=0,
                         help='GPU device ID')
-    
-    args = parser.parse_args()
-    
+    return parser
+
+
+def pick_device(preferred, gpu=0):
+    """The preferred device if available, else the best available one."""
+    if preferred == 'cuda' and torch.cuda.is_available():
+        return f'cuda:{gpu}'
+    if preferred in ('cuda', 'mps') and torch.backends.mps.is_available():
+        return 'mps'
+    if preferred == 'cpu':
+        return 'cpu'
+    return f'cuda:{gpu}' if torch.cuda.is_available() else 'cpu'
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
+    cli = {k: v for k, v in vars(args).items() if k not in ('config', 'input', 'output', 'gpu')}
+    cfg = resolve(cli, args.config)
+    print(f"Config: {args.config} (command-line options override it)")
+
     print("="*70)
     print("PIEZO1 DECODE-MAGIK PIPELINE")
     print("="*70)
     
     # Setup device
-    if torch.cuda.is_available():
-        device = f'cuda:{args.gpu}'
-    elif torch.backends.mps.is_available():
-        device = 'mps'
-    else:
-        device = 'cpu'
+    device = pick_device(cfg['device'], args.gpu)
     print(f"\nDevice: {device}")
     
     # Load models
-    print(f"\nLoading DECODE model: {args.decode}")
-    decode_checkpoint = torch.load(args.decode, map_location=device, weights_only=False)
+    print(f"\nLoading DECODE model: {cfg['decode']}")
+    decode_checkpoint = torch.load(cfg['decode'], map_location=device, weights_only=False)
     decode_model = DECODENet(base_channels=32)
     decode_model.load_state_dict(decode_checkpoint['model_state_dict'])
     decode_model = decode_model.to(device)
     decode_model.eval()
     print("✅ DECODE loaded")
     
-    print(f"\nLoading MAGIK model: {args.magik}")
-    magik_checkpoint = torch.load(args.magik, map_location=device, weights_only=False)
+    print(f"\nLoading MAGIK model: {cfg['magik']}")
+    magik_checkpoint = torch.load(cfg['magik'], map_location=device, weights_only=False)
     magik_model = MAGIKNet()
     magik_model.load_state_dict(magik_checkpoint['model_state_dict'])
     magik_model = magik_model.to(device)
@@ -347,8 +374,9 @@ def main():
         piezo1_movie,
         decode_model,
         device,
-        detection_threshold=args.detection_threshold
+        detection_threshold=cfg['detection_threshold']
     )
+    detections_per_frame = filter_min_photons(detections_per_frame, cfg['min_photons'])
     
     # Stage 2: Track puncta
     print(f"\n{'='*70}")
@@ -359,8 +387,9 @@ def main():
         detections_per_frame,
         magik_model,
         device,
-        max_distance=args.max_distance,
-        link_threshold=args.link_threshold
+        max_frame_gap=cfg['max_frame_gap'],
+        max_distance=cfg['max_distance'],
+        link_threshold=cfg['link_threshold']
     )
     
     # Stage 3: Calcium analysis
@@ -372,7 +401,8 @@ def main():
         traces_df, events_df = analyze_calcium(
             calcium_movie,
             tracks_df,
-            roi_size=args.roi_size
+            **{k: cfg[k] for k in ('roi_size', 'baseline_method', 'baseline_percentile', 'event_threshold',
+                                   'min_duration', 'min_distance')}
         )
     else:
         traces_df = pd.DataFrame()
@@ -387,7 +417,9 @@ def main():
     print("SAVING RESULTS")
     print(f"{'='*70}")
     
-    save_results(args.output, tracks_df, traces_df, events_df, detections_per_frame)
+    save_results(args.output, tracks_df, traces_df, events_df, detections_per_frame,
+                 save_tracks=cfg['save_tracks'], save_calcium_traces=cfg['save_calcium_traces'],
+                 save_events=cfg['save_events'])
     
     print(f"\n{'='*70}")
     print("PIPELINE COMPLETE!")

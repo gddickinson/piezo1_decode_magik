@@ -30,8 +30,8 @@ CONFIG_READERS = {
     'decode_training.yaml': 'passed with --config to scripts/02_train_decode.py (and 02b_resume_decode_training.py)',
     'magik_training.yaml': 'passed with --config to scripts/03_train_magik.py; 03b resumes from the config stored '
                            'in the checkpoint',
-    'pipeline.yaml': 'not read by any script: 04_run_pipeline.py and 09_run_complete_pipeline.py take command-line '
-                     'options instead (listed below)',
+    'pipeline.yaml': 'read by scripts/04_run_pipeline.py (--config, default this file); its command-line options '
+                     'override single values',
 }
 
 
@@ -84,7 +84,13 @@ def _literal(node):
         return ast.unparse(node)
 
 
+def _pipeline_values():
+    raw = yaml.safe_load((ROOT / 'configs' / 'pipeline.yaml').read_text()) or {}
+    return {f'{sec}.{k}': v for sec, d in raw.items() if isinstance(d, dict) for k, v in d.items()}
+
+
 def script_options():
+    pipeline = _pipeline_values()
     out = []
     for path in sorted((ROOT / 'scripts').glob('[0-9]*.py')):
         tree = ast.parse(path.read_text())
@@ -99,11 +105,15 @@ def script_options():
                 action = _literal(kw['action']) if 'action' in kw else None
                 default = _literal(kw['default']) if 'default' in kw else (False if action == 'store_true' else None)
                 unit = UNITS.get(leaf, '')
-                opts.append({'name': name, 'type': (ast.unparse(kw['type']) if 'type' in kw else
+                helptext = str(_literal(kw['help'])) if 'help' in kw else ''
+                m = re.search(r'\((\w+\.\w+)\)$', helptext)
+                ckey = m.group(1) if (m and path.name == '04_run_pipeline.py') else None
+                cval = pipeline.get(ckey) if ckey else None
+                opts.append({'config_key': ckey, 'config_value': cval,'name': name, 'type': (ast.unparse(kw['type']) if 'type' in kw else
                                                     ('flag' if action else 'str')),
                              'default': default, 'required': bool(_literal(kw['required'])) if 'required' in kw else False,
                              'help': _literal(kw['help']) if 'help' in kw else '', 'unit': unit,
-                             'um': px_to_um(default, unit)})
+                             'um': px_to_um(default if default is not None else cval, unit)})
         if opts:
             out.append({'script': f'scripts/{path.name}', 'summary': doc[0] if doc else '', 'options': opts})
     return out

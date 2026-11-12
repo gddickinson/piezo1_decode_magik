@@ -36,6 +36,10 @@ calcium signal analysis for PIEZO1 puncta in dual-channel microscopy data.
 - **`track_stats.py`** -- `analyze_track_lengths()`, `analyze_gt_tracks()`, `analyze_fragmentation()`,
   `length_categories()`
 
+### `pipeline_config.py`
+- `load_pipeline_config()`, `resolve()` -- configs/pipeline.yaml for 04_run_pipeline.py, with command-line overrides
+  (`OPTION_KEYS` maps every YAML key to an option; unknown/missing keys raise)
+
 ### `analysis/`
 - **`calcium_roi.py`** -- ROI-based calcium signal extraction and analysis
   - `CalciumROIAnalyzer` -- extracts traces, computes dF/F0, detects events
@@ -63,7 +67,7 @@ calcium signal analysis for PIEZO1 puncta in dual-channel microscopy data.
 - `02c_evaluate_decode.py` -- DECODE evaluation
 - `03_train_magik.py` / `03b_resume_magik_training.py` -- MAGIK training
 - `03c_evaluate_magik.py` -- MAGIK evaluation
-- `04_run_pipeline.py` -- full pipeline (detect + track)
+- `04_run_pipeline.py` -- full pipeline (detect + track + calcium), settings from configs/pipeline.yaml
 - `06_visualize_results.py` -- result visualization
 - `07_analyze_tracks.py` -- track quality (lengths, spans, gaps, fragmentation)
 - `08_fill_track_gaps.py` -- gap filling in tracks
@@ -81,6 +85,8 @@ calcium signal analysis for PIEZO1 puncta in dual-channel microscopy data.
 - `test_run_pipeline_tracking.py` -- 04_run_pipeline.py stage 2 runs (untrained MAGIK)
 - `test_tracking_linking.py` -- linking, gap filling, track statistics
 - `test_calcium_roi.py` -- ROI extraction edge cases, trace/dF/F0/events
+- `test_pipeline_config.py` -- pipeline.yaml loading, overrides, options reaching the analysis
+- `test_psf_models.py` -- Gaussian FWHM equals the Airy FWHM
 - `test_web.py` -- web API, static build, fixture currency, node engine tests
 - `debug_decode.py` -- interactive model debugging (moved from scripts/)
 

@@ -257,7 +257,10 @@ class CalciumROIAnalyzer:
                      calcium_movie: np.ndarray,
                      track: pd.DataFrame,
                      track_id: int,
-                     detect_events: bool = True) -> Dict:
+                     detect_events: bool = True,
+                     threshold: float = 2.0,
+                     min_duration: int = 2,
+                     min_distance: int = 5) -> Dict:
         """
         Complete analysis for one track.
         
@@ -287,7 +290,8 @@ class CalciumROIAnalyzer:
         
         # Detect events
         if detect_events:
-            events = self.detect_peaks(dff)
+            events = self.detect_peaks(dff, threshold=threshold, min_duration=min_duration,
+                                       min_distance=min_distance)
             results['events'] = events
             results['num_events'] = len(events)
         
@@ -296,21 +300,29 @@ class CalciumROIAnalyzer:
 
 def analyze_all_tracks(calcium_movie: np.ndarray,
                       tracks_df: pd.DataFrame,
-                      roi_size: int = 5) -> Tuple[pd.DataFrame, pd.DataFrame]:
+                      roi_size: int = 5,
+                      baseline_method: str = 'percentile',
+                      baseline_percentile: float = 10.0,
+                      event_threshold: float = 2.0,
+                      min_duration: int = 2,
+                      min_distance: int = 5) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Analyze calcium for all tracks.
     
     Args:
         calcium_movie: (T, H, W) calcium channel
         tracks_df: DataFrame with ['track_id', 'frame', 'x', 'y']
-        roi_size: ROI size
-        
+        roi_size: ROI size (pixels, odd)
+        baseline_method, baseline_percentile: F0 options (CalciumROIAnalyzer)
+        event_threshold, min_duration, min_distance: detect_peaks options (threshold, frames, frames)
+
     Returns:
         traces_df: Fluorescence traces per track
         events_df: Detected calcium events
     """
     
-    analyzer = CalciumROIAnalyzer(roi_size=roi_size)
+    analyzer = CalciumROIAnalyzer(roi_size=roi_size, baseline_method=baseline_method,
+                                  baseline_percentile=baseline_percentile)
     
     all_traces = []
     all_events = []
@@ -323,7 +335,10 @@ def analyze_all_tracks(calcium_movie: np.ndarray,
             calcium_movie,
             track_data,
             track_id,
-            detect_events=True
+            detect_events=True,
+            threshold=event_threshold,
+            min_duration=min_duration,
+            min_distance=min_distance
         )
         
         # Store traces

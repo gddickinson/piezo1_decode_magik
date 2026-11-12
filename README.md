@@ -188,6 +188,8 @@ python scripts/04_run_pipeline.py \
     --output results/
 ```
 
+Settings not given on the command line come from `configs/pipeline.yaml`.
+
 This will:
 - Detect puncta with DECODE
 - Link into tracks with MAGIK
@@ -275,6 +277,10 @@ Data and results produced before these fixes are not directly comparable with ne
 - **Linking in `04_run_pipeline.py`.** It joined all edges above `--link_threshold` into connected components (so
   crossing or nearby particles merged into one track, and every unlinked detection became a one-point track). It now
   uses the same greedy one-to-one linking as 03c/07/08/09.
+- **`configs/pipeline.yaml` is now used.** No script read it before; `04_run_pipeline.py` now takes every setting from
+  it (`--config`, default this file) and command-line options override single values. Its `detection.min_photons`
+  (100) now drops faint detections, and the calcium baseline/event settings now reach the analysis (they were fixed
+  at the defaults). Keys no script could use (`save_visualizations`, `viz_*`, `batch_size`, `num_workers`) were removed.
 
 ---
 

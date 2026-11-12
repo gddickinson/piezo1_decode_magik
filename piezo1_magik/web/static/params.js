@@ -29,7 +29,7 @@ route('params', async (args, q) => {
       return rows.length ? `<h3>${esc(s.script)}</h3><p class="small mute">${esc(s.summary)}</p>
       <div class="scroll"><table class="tbl"><thead><tr><th>option</th><th>type</th><th>default</th><th>unit</th><th>in µm</th><th>help</th></tr></thead><tbody>
       ${list(rows, o => `<tr><td>${esc(o.name)}${o.required ? ' <span class="badge local">required</span>' : ''}</td><td>${esc(o.type)}</td>
-        <td>${o.required ? '' : val(o.default)}</td><td class="unit">${esc(o.unit)}</td><td>${umCell(o.um)}</td><td class="wrap">${esc(o.help)}</td></tr>`)}
+        <td>${o.required ? '' : o.config_key ? `${val(o.config_value)} <span class="small mute">(pipeline.yaml ${esc(o.config_key)})</span>` : val(o.default)}</td><td class="unit">${esc(o.unit)}</td><td>${umCell(o.um)}</td><td class="wrap">${esc(o.help)}</td></tr>`)}
       </tbody></table></div>` : '';
     })}`;
   };

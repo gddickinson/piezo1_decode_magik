@@ -37,7 +37,8 @@ class TrackGenerator:
         
         Args:
             num_tracks: Number of trajectories
-            diffusion_coeff: Diffusion coefficient (pixels/frame)
+            diffusion_coeff: Per-axis step standard deviation (pixels/frame); despite the name this is
+                             not D: the diffusion coefficient is diffusion_coeff**2 / 2 (px^2/frame)
             directed_motion_prob: Probability of directed motion
             directed_speed: Speed for directed motion (pixels/frame)
             

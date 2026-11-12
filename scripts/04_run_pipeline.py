@@ -34,7 +34,8 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from piezo1_magik.models.decode_net import DECODENet
-from piezo1_magik.models.magik_gnn import MAGIKNet, build_tracking_graph
+from piezo1_magik.models.magik_gnn import MAGIKNet
+from piezo1_magik.tracking.linking import build_candidate_graph, greedy_linking
 from piezo1_magik.analysis.calcium_roi import CalciumROIAnalyzer, analyze_all_tracks
 
 
@@ -123,7 +124,13 @@ def track_with_magik(detections_per_frame, magik_model, device,
                      max_frame_gap=5, max_distance=10.0, link_threshold=0.5):
     """
     Link detections into tracks using MAGIK GNN.
-    
+
+    Same method as 03c/07/08/09 (piezo1_magik.tracking.linking): candidate edges join detections
+    1..max_frame_gap frames apart and within max_distance pixels; MAGIK gives each edge a probability
+    (sigmoid of its logit); greedy_linking accepts edges above link_threshold, highest probability first,
+    with at most one link into and one out of each detection. Detections with no accepted link are not
+    part of any track.
+
     Args:
         detections_per_frame: Detections from DECODE
         magik_model: Trained MAGIK model
@@ -131,124 +138,58 @@ def track_with_magik(detections_per_frame, magik_model, device,
         max_frame_gap: Max frames to link across
         max_distance: Max spatial distance (pixels)
         link_threshold: Probability threshold for linking
-        
+
     Returns:
         tracks_df: DataFrame with tracks
     """
     print("\nBuilding tracking graph...")
 
-    # Flatten the per-frame lists into graph nodes; node_map[i] = (frame, index in that frame)
-    flat, node_map = [], []
-    for frame_idx, dets in enumerate(detections_per_frame):
-        for det_idx, det in enumerate(dets):
-            flat.append({'frame': frame_idx, 'x': float(det['x']), 'y': float(det['y']),
-                         'prob': float(det.get('prob', 1.0)), 'photons': float(det.get('photons', 1000.0))})
-            node_map.append((frame_idx, det_idx))
-
-    node_features, edge_index, edge_features = build_tracking_graph(
-        flat,
-        max_temporal_gap=max_frame_gap,
-        max_spatial_distance=max_distance
-    )
+    # Flatten the per-frame lists into graph nodes (frame order); node_map[i] = (frame, index in that frame)
+    node_map = [(f, k) for f, dets in enumerate(detections_per_frame) for k in range(len(dets))]
+    dets = [detections_per_frame[f][k] for f, k in node_map]
+    node_features, edge_index, edge_features = build_candidate_graph(
+        [f for f, _ in node_map], [float(d['x']) for d in dets], [float(d['y']) for d in dets],
+        [float(d.get('prob', 1.0)) for d in dets], [float(d.get('photons', 1000.0)) for d in dets],
+        max_frame_gap, max_distance)
 
     print(f"  Nodes: {node_features.shape[0]}")
     print(f"  Candidate edges: {edge_index.shape[1]}")
 
+    empty = pd.DataFrame(columns=['track_id', 'frame', 'x', 'y', 'photons', 'sigma_x', 'sigma_y'])
     if edge_index.shape[1] == 0:
         print("⚠️  No candidate edges - returning empty tracks")
-        return pd.DataFrame(columns=['track_id', 'frame', 'x', 'y', 'photons'])
+        return empty
 
-    # Move to device
-    node_features = node_features.to(device)
-    edge_index = edge_index.to(device)
-    edge_features = edge_features.to(device)
-
-    # Predict links: every candidate edge whose MAGIK probability exceeds link_threshold
     print("Predicting links with MAGIK...")
     magik_model.eval()
     with torch.no_grad():
-        link_probs = torch.sigmoid(magik_model(node_features, edge_index, edge_features))
-    links = edge_index[:, link_probs > link_threshold].t().cpu().numpy()
+        edge_logits = magik_model(torch.from_numpy(node_features).float().to(device),
+                                  torch.from_numpy(edge_index).long().to(device),
+                                  torch.from_numpy(edge_features).float().to(device))
+        edge_probs = torch.sigmoid(edge_logits).cpu()
 
-    print(f"✅ Predicted {len(links)} links")
-    
-    # Convert links to tracks using connected components
-    tracks = assign_track_ids(links, len(node_features))
-    
-    # Create DataFrame
+    node_to_track = greedy_linking(edge_probs, edge_index, link_threshold)
+    print(f"✅ Linked {len(node_to_track)} of {len(node_map)} detections")
+    if not node_to_track:
+        return empty
+
     track_data = []
-    for node_idx, track_id in enumerate(tracks):
-        if track_id >= 0:  # Valid track
-            frame_idx, det_idx = node_map[node_idx]
-            detection = detections_per_frame[frame_idx][det_idx]
-            
-            track_data.append({
-                'track_id': track_id,
-                'frame': frame_idx,
-                'x': detection['x'],
-                'y': detection['y'],
-                'photons': detection['photons'],
-                'sigma_x': detection['sigma_x'],
-                'sigma_y': detection['sigma_y']
-            })
-    
+    for node_idx, track_id in sorted(node_to_track.items(), key=lambda kv: (kv[1], node_map[kv[0]][0])):
+        frame_idx, det_idx = node_map[node_idx]
+        detection = detections_per_frame[frame_idx][det_idx]
+        track_data.append({
+            'track_id': track_id,
+            'frame': frame_idx,
+            'x': detection['x'],
+            'y': detection['y'],
+            'photons': detection['photons'],
+            'sigma_x': detection['sigma_x'],
+            'sigma_y': detection['sigma_y']
+        })
+
     tracks_df = pd.DataFrame(track_data)
-    
-    num_tracks = tracks_df['track_id'].nunique() if len(tracks_df) > 0 else 0
-    print(f"✅ Created {num_tracks} tracks")
-    
+    print(f"✅ Created {tracks_df['track_id'].nunique()} tracks")
     return tracks_df
-
-
-def assign_track_ids(links, num_nodes):
-    """
-    Assign track IDs using connected components.
-    
-    Args:
-        links: (N, 2) array of linked node pairs
-        num_nodes: Total number of nodes
-        
-    Returns:
-        track_ids: (num_nodes,) array of track IDs (-1 for unlinked)
-    """
-    from collections import defaultdict
-    
-    # Build adjacency list
-    graph = defaultdict(set)
-    for i, j in links:
-        graph[i].add(j)
-        graph[j].add(i)
-    
-    # Find connected components
-    track_ids = np.full(num_nodes, -1)
-    current_track_id = 0
-    visited = set()
-    
-    for node in range(num_nodes):
-        if node in visited:
-            continue
-        
-        # BFS to find connected component
-        component = []
-        queue = [node]
-        visited.add(node)
-        
-        while queue:
-            current = queue.pop(0)
-            component.append(current)
-            
-            for neighbor in graph[current]:
-                if neighbor not in visited:
-                    visited.add(neighbor)
-                    queue.append(neighbor)
-        
-        # Assign track ID to entire component
-        for n in component:
-            track_ids[n] = current_track_id
-        
-        current_track_id += 1
-    
-    return track_ids
 
 
 def analyze_calcium(calcium_movie, tracks_df, roi_size=5):

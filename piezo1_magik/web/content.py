@@ -31,9 +31,9 @@ STAGES = [
             '[dx, dy, distance, temporal_gap] (training config: 2 frames, 30 px = 3.9 um at 130 nm/px).',
             'MAGIKNet: node and edge MLP encoders (hidden_dim 64), 3 EdgeConv message-passing layers (sum aggregation, '
             'residual), and an edge classifier giving one logit per candidate edge; sigmoid gives the link probability.',
-            'Linking in 03c/07/08/09: greedy, highest probability first, each detection with at most one link in and one '
-            'out (greedy_linking). 04_run_pipeline.py instead joins all edges above --link_threshold into connected '
-            'components.',
+            'Linking (all scripts: 03c, 04, 07, 08, 09, via piezo1_magik/tracking/linking.py): edges above the link '
+            'threshold are accepted greedily, highest probability first, each detection with at most one link in and '
+            'one out; detections with no accepted link belong to no track.',
             'Optional gap filling (09 --use_gap_filling, 08): a fragment is extended by another that starts at most '
             'max_gap frames after it ends and within max_distance px of its linearly extrapolated position; best '
             'score (distance + 2 x gap) first.',

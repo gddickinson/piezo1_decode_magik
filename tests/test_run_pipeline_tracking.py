@@ -42,6 +42,20 @@ def test_track_with_magik_runs_and_links():
     for _, g in tracks.groupby("track_id"):
         assert sorted(g["frame"]) == list(range(6))
         assert g["x"].std() < 5  # the two particles (30 px apart) are not mixed
-    # threshold above any sigmoid output: no links, every detection its own track
+    # threshold above any sigmoid output: no links, so no tracks (unlinked detections are dropped, as in 09)
     none = mod.track_with_magik(dets, model, "cpu", max_frame_gap=1, max_distance=5.0, link_threshold=1.0)
-    assert none["track_id"].nunique() == 12
+    assert len(none) == 0
+
+
+def test_04_uses_the_shared_greedy_linking():
+    """04 links like 03c/07/08/09: one-to-one greedy linking. With three particles converging, connected
+    components of all above-threshold edges would merge them into one track; greedy linking keeps them apart."""
+    mod = load_script()
+    assert not hasattr(mod, "assign_track_ids")
+    torch.manual_seed(0)
+    model = mod.MAGIKNet().eval()
+    dets = [[{"x": 10.0 + k * 1.0, "y": 10.0, "photons": 1e3, "sigma_x": .1, "sigma_y": .1, "prob": .9}
+             for k in range(3)] for _ in range(4)]
+    tracks = mod.track_with_magik(dets, model, "cpu", max_frame_gap=1, max_distance=5.0, link_threshold=-1.0)
+    assert tracks["track_id"].nunique() == 3
+    assert (tracks.groupby("track_id").size() == 4).all()

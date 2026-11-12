@@ -99,7 +99,8 @@ Based on graph neural networks:
 - GNN learns edge probabilities
 - Bridges blinking: candidate edges span up to `max_temporal_gap` frames, and optional gap filling
   (`08_fill_track_gaps.py`, `09 --use_gap_filling`) joins fragments across longer gaps
-- Linking is one-to-one (greedy, highest probability first), so tracks do not split or merge
+- Linking is one-to-one (greedy, highest probability first; `piezo1_magik/tracking/linking.py`, used by every
+  script), so tracks do not split or merge; detections with no accepted link are not part of any track
 
 **Key features:**
 - Temporal context (looks ahead/behind)
@@ -271,6 +272,9 @@ Data and results produced before these fixes are not directly comparable with ne
   noise). Peaks must now rise threshold × σ above the trace's median, with σ = 1.4826 × MAD (robust noise
   estimate); event edges are at half that height above the median. On the demo: 4 detections inside placed events,
   2 elsewhere. Event counts in `calcium_events.csv` change.
+- **Linking in `04_run_pipeline.py`.** It joined all edges above `--link_threshold` into connected components (so
+  crossing or nearby particles merged into one track, and every unlinked detection became a one-point track). It now
+  uses the same greedy one-to-one linking as 03c/07/08/09.
 
 ---
 

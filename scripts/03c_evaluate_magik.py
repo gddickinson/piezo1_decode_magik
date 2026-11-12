@@ -32,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from piezo1_magik.models.magik_gnn import MAGIKNet
 from piezo1_magik.models.decode_net import DECODENet
 from piezo1_magik.data.magik_dataset import MAGIKDataset
+from piezo1_magik.tracking.linking import greedy_linking
 
 
 def load_models(magik_path, decode_path, device='cpu'):
@@ -67,80 +68,6 @@ def load_models(magik_path, decode_path, device='cpu'):
     print(f"   MAGIK: epoch {magik_checkpoint['epoch']}, val loss {magik_checkpoint['val_loss']:.4f}")
     
     return magik_model, decode_model
-
-
-def greedy_linking(edge_probs, edge_index, threshold=0.5):
-    """
-    Improved greedy linking algorithm.
-    
-    Links detections by selecting high-probability edges, ensuring each
-    detection is linked at most once in each direction (forward/backward).
-    """
-    # Get edges above threshold
-    mask = edge_probs > threshold
-    
-    if mask.sum() == 0:
-        return {}  # No links
-    
-    valid_edges = edge_index[:, mask]
-    valid_probs = edge_probs[mask]
-    
-    # Sort by probability (highest first)
-    sorted_idx = torch.argsort(valid_probs, descending=True)
-    
-    # Track linking: each node can have at most one outgoing and one incoming edge
-    src_linked = set()  # Nodes that already have outgoing links
-    dst_linked = set()  # Nodes that already have incoming links
-    
-    # Store the actual links
-    links = []
-    
-    for idx in sorted_idx:
-        src = valid_edges[0, idx].item()
-        dst = valid_edges[1, idx].item()
-        
-        # Only add link if neither endpoint is already linked in this direction
-        if src not in src_linked and dst not in dst_linked:
-            links.append((src, dst))
-            src_linked.add(src)
-            dst_linked.add(dst)
-    
-    # Build tracks from links
-    node_to_track = {}
-    track_counter = 0
-    
-    # Build adjacency structure
-    forward_links = {}  # node -> next node
-    backward_links = {}  # node -> prev node
-    
-    for src, dst in links:
-        forward_links[src] = dst
-        backward_links[dst] = src
-    
-    # Find all track starts (nodes with no predecessor)
-    all_nodes = set(forward_links.keys()) | set(backward_links.keys())
-    track_starts = [n for n in all_nodes if n not in backward_links]
-    
-    # Build tracks by following links forward
-    for start_node in track_starts:
-        if start_node in node_to_track:
-            continue  # Already assigned
-        
-        # Follow this track
-        current = start_node
-        while current is not None:
-            node_to_track[current] = track_counter
-            current = forward_links.get(current, None)
-        
-        track_counter += 1
-    
-    # Assign any unlinked nodes to their own tracks
-    for node in all_nodes:
-        if node not in node_to_track:
-            node_to_track[node] = track_counter
-            track_counter += 1
-    
-    return node_to_track
 
 
 def compute_track_metrics(pred_tracks, gt_tracks, node_features):

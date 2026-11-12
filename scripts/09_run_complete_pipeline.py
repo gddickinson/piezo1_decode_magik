@@ -24,13 +24,14 @@ import tifffile
 import matplotlib.pyplot as plt
 from pathlib import Path
 from tqdm import tqdm
-from collections import defaultdict
 import sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from piezo1_magik.models.decode_net import DECODENet
 from piezo1_magik.models.magik_gnn import MAGIKNet
+from piezo1_magik.tracking.linking import (build_candidate_graph, build_track_fragments,
+                                          fragments_to_node_mapping, greedy_linking, merge_track_fragments)
 
 
 def load_models(decode_path, magik_path, device):
@@ -136,51 +137,13 @@ def build_graph(detections_df, max_temporal_gap, max_spatial_distance):
     """Build temporal graph from detections."""
     print(f"\nBuilding graph (temporal_gap≤{max_temporal_gap}, spatial_dist≤{max_spatial_distance})...")
 
-    # Convert to numpy arrays
-    frames = detections_df['frame'].values
-    positions = detections_df[['x', 'y']].values
-    probs = detections_df['probability'].values
-    photons = detections_df['photons'].values
-
-    num_nodes = len(detections_df)
-
-    # Node features: [frame, x, y, prob, photons]
-    node_features = np.column_stack([frames, positions, probs, photons])
-
-    # Build edges
-    edges = []
-    edge_features_list = []
-
-    for i in range(num_nodes):
-        frame_i = frames[i]
-        pos_i = positions[i]
-
-        # Look for connections to future frames
-        for j in range(i + 1, num_nodes):
-            frame_j = frames[j]
-
-            # Check temporal gap
-            gap = frame_j - frame_i
-            if gap <= 0 or gap > max_temporal_gap:
-                continue
-
-            # Check spatial distance
-            pos_j = positions[j]
-            dx = pos_j[0] - pos_i[0]
-            dy = pos_j[1] - pos_i[1]
-            distance = np.sqrt(dx**2 + dy**2)
-
-            if distance <= max_spatial_distance:
-                edges.append([i, j])
-                edge_features_list.append([dx, dy, distance, gap])
-
-    if len(edges) == 0:
+    node_features, edge_index, edge_features = build_candidate_graph(
+        detections_df['frame'].values, detections_df['x'].values, detections_df['y'].values,
+        detections_df['probability'].values, detections_df['photons'].values,
+        max_temporal_gap, max_spatial_distance)
+    num_nodes = len(node_features)
+    if edge_index.shape[1] == 0:
         print("⚠️  No edges created!")
-        edge_index = np.array([[], []], dtype=np.int64)
-        edge_features = np.array([], dtype=np.float32).reshape(0, 4)
-    else:
-        edge_index = np.array(edges, dtype=np.int64).T
-        edge_features = np.array(edge_features_list, dtype=np.float32)
 
     print(f"✅ Graph built: {num_nodes} nodes, {edge_index.shape[1]} edges")
 
@@ -205,60 +168,12 @@ def run_magik(node_features, edge_index, edge_features, magik_model, device, thr
         edge_logits = magik_model(node_features_t, edge_index_t, edge_features_t)
         edge_probs = torch.sigmoid(edge_logits)
 
-    # Greedy linking
-    mask = edge_probs > threshold
-
-    if mask.sum() == 0:
+    # Greedy one-to-one linking
+    node_to_track = greedy_linking(edge_probs.cpu(), edge_index_t.cpu(), threshold)
+    if not node_to_track:
         print("⚠️  No edges above threshold")
         return {}
-
-    valid_edges = edge_index_t[:, mask.cpu()]
-    valid_probs = edge_probs[mask]
-
-    sorted_idx = torch.argsort(valid_probs, descending=True)
-
-    src_linked = set()
-    dst_linked = set()
-    links = []
-
-    for idx in sorted_idx:
-        src = valid_edges[0, idx].item()
-        dst = valid_edges[1, idx].item()
-
-        if src not in src_linked and dst not in dst_linked:
-            links.append((src, dst))
-            src_linked.add(src)
-            dst_linked.add(dst)
-
-    # Build tracks
-    node_to_track = {}
-    track_counter = 0
-
-    forward_links = {}
-    backward_links = {}
-
-    for src, dst in links:
-        forward_links[src] = dst
-        backward_links[dst] = src
-
-    all_nodes = set(forward_links.keys()) | set(backward_links.keys())
-    track_starts = [n for n in all_nodes if n not in backward_links]
-
-    for start_node in track_starts:
-        if start_node in node_to_track:
-            continue
-
-        current = start_node
-        while current is not None:
-            node_to_track[current] = track_counter
-            current = forward_links.get(current, None)
-
-        track_counter += 1
-
-    for node in all_nodes:
-        if node not in node_to_track:
-            node_to_track[node] = track_counter
-            track_counter += 1
+    track_counter = len(set(node_to_track.values()))
 
     print(f"✅ Created {track_counter} initial track fragments")
 
@@ -269,130 +184,15 @@ def fill_gaps(node_to_track, node_features, max_gap, max_distance):
     """Fill gaps between track fragments."""
     print(f"\nFilling gaps (max_gap={max_gap}, max_distance={max_distance})...")
 
-    # Build fragments
-    track_to_nodes = defaultdict(list)
-    for node_idx, track_id in node_to_track.items():
-        track_to_nodes[track_id].append(node_idx)
-
-    fragments = []
-    for track_id, node_indices in track_to_nodes.items():
-        node_data = []
-        for node_idx in node_indices:
-            frame = node_features[node_idx, 0]
-            x = node_features[node_idx, 1]
-            y = node_features[node_idx, 2]
-            node_data.append((frame, x, y, node_idx))
-
-        node_data.sort(key=lambda x: x[0])
-
-        frames = [d[0] for d in node_data]
-        positions = [(d[1], d[2]) for d in node_data]
-        nodes = [d[3] for d in node_data]
-
-        fragment = {
-            'track_id': track_id,
-            'nodes': nodes,
-            'frames': frames,
-            'positions': positions,
-            'start_frame': frames[0],
-            'end_frame': frames[-1],
-            'start_pos': positions[0],
-            'end_pos': positions[-1],
-            'length': len(nodes)
-        }
-
-        fragments.append(fragment)
-
+    fragments = build_track_fragments(node_to_track, node_features)
     print(f"  Initial fragments: {len(fragments)}")
 
-    # Merge fragments
-    active_fragments = {i: frag.copy() for i, frag in enumerate(fragments)}
-    merged_into = {}
-
-    iteration = 0
-    max_iterations = 100
-
-    while iteration < max_iterations:
-        iteration += 1
-
-        merge_candidates = []
-
-        for i, frag1 in active_fragments.items():
-            if i in merged_into:
-                continue
-
-            for j, frag2 in active_fragments.items():
-                if j in merged_into or i == j:
-                    continue
-
-                if frag1['end_frame'] >= frag2['start_frame']:
-                    continue
-
-                gap = frag2['start_frame'] - frag1['end_frame']
-                if gap > max_gap:
-                    continue
-
-                # Predict position
-                if len(frag1['frames']) >= 2:
-                    x0, y0 = frag1['start_pos']
-                    x1, y1 = frag1['end_pos']
-                    dt = frag1['end_frame'] - frag1['start_frame']
-                    if dt > 0:
-                        vx = (x1 - x0) / dt
-                        vy = (y1 - y0) / dt
-                    else:
-                        vx, vy = 0, 0
-
-                    dt_pred = frag2['start_frame'] - frag1['end_frame']
-                    predicted_x = x1 + vx * dt_pred
-                    predicted_y = y1 + vy * dt_pred
-                else:
-                    predicted_x, predicted_y = frag1['end_pos']
-
-                actual_x, actual_y = frag2['start_pos']
-                distance = np.sqrt((predicted_x - actual_x)**2 + (predicted_y - actual_y)**2)
-
-                if distance <= max_distance:
-                    quality = distance + gap * 2
-                    merge_candidates.append((i, j, quality))
-
-        if len(merge_candidates) == 0:
-            break
-
-        merge_candidates.sort(key=lambda x: x[2])
-        i, j, quality = merge_candidates[0]
-
-        frag1 = active_fragments[i]
-        frag2 = active_fragments[j]
-
-        merged_fragment = {
-            'track_id': frag1['track_id'],
-            'nodes': frag1['nodes'] + frag2['nodes'],
-            'frames': frag1['frames'] + frag2['frames'],
-            'positions': frag1['positions'] + frag2['positions'],
-            'start_frame': frag1['start_frame'],
-            'end_frame': frag2['end_frame'],
-            'start_pos': frag1['start_pos'],
-            'end_pos': frag2['end_pos'],
-            'length': frag1['length'] + frag2['length']
-        }
-
-        active_fragments[i] = merged_fragment
-        merged_into[j] = i
-
-    final_fragments = []
-    for i, frag in active_fragments.items():
-        if i not in merged_into:
-            final_fragments.append(frag)
+    final_fragments, iteration = merge_track_fragments(fragments, max_gap, max_distance)
 
     print(f"  Final tracks: {len(final_fragments)}")
     print(f"  Merged {len(fragments) - len(final_fragments)} fragments in {iteration} iterations")
 
-    # Convert back to node mapping
-    node_to_track_merged = {}
-    for track_id, frag in enumerate(final_fragments):
-        for node_idx in frag['nodes']:
-            node_to_track_merged[node_idx] = track_id
+    node_to_track_merged = fragments_to_node_mapping(final_fragments)
 
     return node_to_track_merged
 

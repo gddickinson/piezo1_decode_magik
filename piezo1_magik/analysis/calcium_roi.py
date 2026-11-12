@@ -32,10 +32,13 @@ class CalciumROIAnalyzer:
                  baseline_percentile: float = 10.0):
         """
         Args:
-            roi_size: Size of ROI (roi_size × roi_size pixels)
+            roi_size: Size of ROI (roi_size × roi_size pixels); a positive odd number so the ROI
+                      is centred on the punctum's pixel
             baseline_method: How to compute F₀ ('percentile' or 'rolling')
             baseline_percentile: Percentile for baseline (lower = more conservative)
         """
+        if int(roi_size) != roi_size or roi_size < 1 or roi_size % 2 == 0:
+            raise ValueError(f"roi_size must be a positive odd number of pixels, got {roi_size}")
         self.roi_size = roi_size
         self.baseline_method = baseline_method
         self.baseline_percentile = baseline_percentile

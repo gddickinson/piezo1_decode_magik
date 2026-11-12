@@ -31,3 +31,13 @@ def test_trace_dff_and_peaks():
     r = a.analyze_track(movie, track, track_id=0)
     assert abs(r['baseline'] - 500) < 5
     assert [e['peak_frame'] for e in r['events']] and all(30 <= e['peak_frame'] <= 35 for e in r['events'])
+
+
+def test_even_roi_size_rejected_up_front():
+    """Regression: an even roi_size (e.g. 4) cut roi_size + 1 pixels and then crashed with a NumPy broadcast error
+    inside extract_roi on the first punctum. It is now rejected when the analyzer is created."""
+    import pytest
+    with pytest.raises(ValueError, match="odd"):
+        CalciumROIAnalyzer(roi_size=4)
+    with pytest.raises(ValueError):
+        CalciumROIAnalyzer(roi_size=0)

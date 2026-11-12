@@ -3,7 +3,7 @@
 import { api, app, esc, list, route } from './core.js';
 import { drawFrame, lineChart } from './charts.js';
 import { colour, fmt, getDemo } from './data.js';
-import { roundHalfEven } from './roi_engine.js';
+import { noiseLevels, roundHalfEven } from './roi_engine.js';
 
 const K = 4;  // display pixels per image pixel
 
@@ -20,7 +20,7 @@ function form(p) {
       <label for="baseline_percentile">baseline_percentile (percentile method)</label>
       <input id="baseline_percentile" name="baseline_percentile" type="number" min="0" max="100" step="1" value="${p.baseline_percentile}"></fieldset>
     <fieldset><legend>Events (detect_peaks)</legend>
-      <label for="threshold">threshold (× std of ΔF/F₀)</label><input id="threshold" name="threshold" type="number" min="0" step="0.1" value="${p.threshold}">
+      <label for="threshold">threshold (× robust σ of ΔF/F₀, above its median)</label><input id="threshold" name="threshold" type="number" min="0" step="0.1" value="${p.threshold}">
       <label for="min_duration">min_duration (frames)</label><input id="min_duration" name="min_duration" type="number" min="1" step="1" value="${p.min_duration}">
       <label for="min_distance">min_distance between peaks (frames)</label><input id="min_distance" name="min_distance" type="number" min="1" step="1" value="${p.min_distance}"></fieldset>
     <button type="submit">Run analysis</button></form>`;
@@ -40,7 +40,6 @@ function readForm() {
   return p;
 }
 
-const std = v => { const m = v.reduce((a, b) => a + b, 0) / v.length; return Math.sqrt(v.reduce((a, b) => a + (b - m) ** 2, 0) / v.length); };
 
 route('roi', async () => {
   const [d, info] = await Promise.all([getDemo(), api('/info')]);
@@ -49,7 +48,7 @@ route('roi', async () => {
   app().innerHTML = `
   <h1>ROI calcium analysis</h1>
   <p class="lead">Stage 3: for every tracked punctum, the mean calcium intensity in a small square ROI gives F(t), F₀ is a low
-    percentile of F, ΔF/F₀ = (F − F₀)/F₀, and peaks above threshold × std(ΔF/F₀) are calcium events.</p>
+    percentile of F, ΔF/F₀ = (F − F₀)/F₀, and peaks that rise threshold × σ above the trace's median (σ: robust noise, 1.4826 × MAD) are calcium events.</p>
   <p class="demo-label">${esc(d.description)} The ROI analysis uses the ground-truth tracks.</p>
   <div class="side"><div>${form(info.roi_defaults)}<p id="roimsg" class="small"></p></div>
   <div>
@@ -65,7 +64,9 @@ route('roi', async () => {
   <ul class="small">
     <li>The generator clips directed tracks at the image border. There the ROI is partly outside the image: those pixels are left out of the
       mean (not counted as zero) and the frames are flagged as edge ROIs, so F is not biased by the border.</li>
-    <li>The event threshold is threshold × std(ΔF/F₀) measured from zero, while F₀ is the 10th percentile, so ΔF/F₀ sits above zero on average and noise peaks can cross a threshold of 2. The dashed boxes mark where events were really placed.</li>
+    <li>Events must rise threshold × σ above the trace's median, where σ = 1.4826 × MAD is a noise estimate that the events themselves barely
+      affect. (Until 2026-11-12 the threshold was threshold × std(ΔF/F₀) measured from zero; with F₀ a low percentile, ΔF/F₀ sits above zero and
+      noise peaks crossed it: 16 of 20 detections on this demo were noise.) The dashed boxes mark where events were really placed.</li>
   </ul>`;
   const view = document.getElementById('view'), off = document.createElement('canvas');
   const caScale = v => (v - 300) / (900 - 300) * 255;
@@ -94,8 +95,7 @@ route('roi', async () => {
     const r = st.res.tracks.find(t => t.track_id === st.track);
     const truth = d.true_events.filter(e => e.track_id === st.track).map(e => [e.start_frame, e.end_frame, 'truth']);
     const bands = r.events.map(e => [e.frame, e.end_frame, 'ev']);
-    const valid = r.dff.filter(v => v !== null && !Number.isNaN(v));
-    const thr = valid.length ? st.res.params.threshold * std(valid) : undefined;
+    const lv = noiseLevels(r.dff, st.res.params.threshold), thr = lv ? lv.thr : undefined;
     const n = rowsOf(st.track).length;
     document.getElementById('charts').innerHTML = `
       <div class="two"><div class="panel"><h3>F(t), track ${st.track}</h3>${lineChart([{ y: r.trace, colour: colour(st.track) }],
@@ -104,7 +104,7 @@ route('roi', async () => {
           · ${r.edge.filter(Boolean).length} edge-ROI frames (ROI partly outside the image)</p></div>
       <div class="panel"><h3>ΔF/F₀, track ${st.track}</h3>${lineChart([{ y: r.dff, colour: colour(st.track), marks: r.events.map(e => e.peak_frame) }],
         { xlabel: 'frame', ylabel: 'ΔF/F₀', thr, bands: [...bands, ...truth], label: `dF/F0 of track ${st.track}` })}
-        <p class="small mute">dashed line: threshold ${thr === undefined ? '' : fmt(thr)} · shaded: detected events · dashed boxes: events placed in the demo</p></div></div>`;
+        <p class="small mute">dashed line: threshold ${thr === undefined ? '' : `${fmt(thr)} = median ${fmt(lv.level)} + ${st.res.params.threshold} × robust σ ${fmt(lv.sigma)}`} · shaded: detected events · dashed boxes: events placed in the demo</p></div></div>`;
   }
   function drawEvents() {
     const all = st.res.tracks.flatMap(t => t.events.map(e => ({ ...e, track_id: t.track_id })));

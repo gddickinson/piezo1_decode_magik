@@ -10,7 +10,7 @@ For each tracked punctum:
 3. Generate fluorescence trace F(t) (pixels outside the image are excluded, and such
    edge ROIs are flagged)
 4. Calculate ΔF/F₀
-5. Detect peaks → calcium events
+5. Detect peaks → calcium events (threshold above the trace's median, in robust noise units)
 """
 
 import numpy as np
@@ -194,69 +194,65 @@ class CalciumROIAnalyzer:
                     min_distance: int = 5) -> List[Dict]:
         """
         Detect calcium events as peaks in ΔF/F₀ trace.
-        
+
+        The threshold is measured from the trace's own baseline, not from zero: with
+        level = median(ΔF/F₀) and sigma = 1.4826 x median(|ΔF/F₀ - level|) (the MAD, scaled to equal the
+        standard deviation for Gaussian noise; robust to the events themselves), a peak must reach
+        level + threshold x sigma, and the event extends while ΔF/F₀ stays above level + threshold x sigma / 2.
+        Both statistics are taken over the whole trace (frames with a detection), so a slowly drifting
+        baseline should be handled through F₀ (baseline_method='rolling').
+
         Args:
-            dff_trace: ΔF/F₀ trace
-            threshold: Detection threshold (in units of std)
+            dff_trace: ΔF/F₀ trace (NaN where the track has no measurement)
+            threshold: Detection threshold (in units of the robust noise sigma above the median)
             min_duration: Minimum event duration (frames)
             min_distance: Minimum distance between peaks (frames)
-            
+
         Returns:
             events: List of detected events
                 Each event: {
-                    'frame': int,
-                    'amplitude': float,
-                    'duration': int,
-                    'peak_frame': int
+                    'frame': int (start), 'peak_frame': int, 'end_frame': int,
+                    'amplitude': float (ΔF/F₀ at the peak), 'duration': int (frames)
                 }
         """
-        # Remove NaNs
-        valid_mask = ~np.isnan(dff_trace)
-        valid_trace = dff_trace.copy()
-        valid_trace[~valid_mask] = 0
-        
-        # Compute threshold
-        std = np.std(valid_trace[valid_mask]) if valid_mask.sum() > 0 else 0
-        if std == 0:
+        valid_mask = np.isfinite(dff_trace)
+        if valid_mask.sum() == 0:
             return []
-        
-        threshold_abs = threshold * std
-        
-        # Find peaks
-        peaks, properties = signal.find_peaks(
-            valid_trace,
-            height=threshold_abs,
-            distance=min_distance
-        )
-        
+        valid = dff_trace[valid_mask]
+        level = float(np.median(valid))
+        sigma = 1.4826 * float(np.median(np.abs(valid - level)))
+        if sigma == 0:
+            return []
+
+        # Frames without a measurement sit at the baseline level (they neither start nor extend an event)
+        valid_trace = np.where(valid_mask, dff_trace, level)
+        threshold_abs = level + threshold * sigma
+        boundary = level + threshold * sigma / 2
+
+        peaks, _ = signal.find_peaks(valid_trace, height=threshold_abs, distance=min_distance)
+
         events = []
-        
         for peak_idx in peaks:
-            # Find event boundaries (where crosses threshold)
-            # Search backward
+            # Event boundaries: where the trace falls back below half the threshold height
             start = peak_idx
-            while start > 0 and valid_trace[start-1] > threshold_abs / 2:
+            while start > 0 and valid_trace[start - 1] > boundary:
                 start -= 1
-            
-            # Search forward
             end = peak_idx
-            while end < len(valid_trace)-1 and valid_trace[end+1] > threshold_abs / 2:
+            while end < len(valid_trace) - 1 and valid_trace[end + 1] > boundary:
                 end += 1
-            
+
             duration = end - start + 1
-            
-            # Filter by duration
             if duration >= min_duration:
                 events.append({
-                    'frame': start,
-                    'peak_frame': peak_idx,
-                    'amplitude': dff_trace[peak_idx],
-                    'duration': duration,
-                    'end_frame': end
+                    'frame': int(start),
+                    'peak_frame': int(peak_idx),
+                    'amplitude': float(dff_trace[peak_idx]),
+                    'duration': int(duration),
+                    'end_frame': int(end)
                 })
-        
+
         return events
-    
+
     def analyze_track(self,
                      calcium_movie: np.ndarray,
                      track: pd.DataFrame,

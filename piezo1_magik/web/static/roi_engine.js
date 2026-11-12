@@ -73,7 +73,6 @@ export function rollingMinCentered(values, w) {
 }
 
 const mean = v => v.reduce((s, x) => s + x, 0) / v.length;
-const std = v => { const m = mean(v); return Math.sqrt(v.reduce((s, x) => s + (x - m) ** 2, 0) / v.length); };
 
 // compute_baseline: F0
 export function computeBaseline(trace, method = 'percentile', pct = 10.0) {
@@ -118,17 +117,24 @@ export function findPeaks(x, hmin, distance) {
   return p;
 }
 
-// detect_peaks: events [{frame, peak_frame, amplitude, duration, end_frame}]
+// Baseline level and robust noise of a dF/F0 trace, as in detect_peaks: median and 1.4826 x MAD of the finite values
+export function noiseLevels(dff, threshold = 2.0) {
+  const valid = dff.filter(v => v !== null && Number.isFinite(v));
+  if (!valid.length) return null;
+  const level = median(valid), sigma = 1.4826 * median(valid.map(v => Math.abs(v - level)));
+  return { level, sigma, thr: level + threshold * sigma, boundary: level + threshold * sigma / 2 };
+}
+
+// detect_peaks: events [{frame, peak_frame, amplitude, duration, end_frame}]; threshold above the trace's median
+// in units of the robust noise sigma
 export function detectPeaks(dff, threshold = 2.0, minDuration = 2, minDistance = 5) {
-  const validVals = dff.filter(v => !Number.isNaN(v));
-  const vt = dff.map(v => (Number.isNaN(v) ? 0 : v));
-  const s = validVals.length ? std(validVals) : 0;
-  if (s === 0 || Number.isNaN(s)) return [];
-  const thr = threshold * s, events = [];
-  for (const pk of findPeaks(vt, thr, minDistance)) {
+  const n = noiseLevels(dff, threshold);
+  if (!n || n.sigma === 0 || Number.isNaN(n.sigma)) return [];
+  const vt = dff.map(v => (v === null || !Number.isFinite(v) ? n.level : v)), events = [];
+  for (const pk of findPeaks(vt, n.thr, minDistance)) {
     let start = pk, end = pk;
-    while (start > 0 && vt[start - 1] > thr / 2) start--;
-    while (end < vt.length - 1 && vt[end + 1] > thr / 2) end++;
+    while (start > 0 && vt[start - 1] > n.boundary) start--;
+    while (end < vt.length - 1 && vt[end + 1] > n.boundary) end++;
     const duration = end - start + 1;
     if (duration >= minDuration) events.push({ frame: start, peak_frame: pk, amplitude: dff[pk], duration, end_frame: end });
   }

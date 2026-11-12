@@ -69,3 +69,39 @@ def test_even_roi_size_rejected_up_front():
         CalciumROIAnalyzer(roi_size=4)
     with pytest.raises(ValueError):
         CalciumROIAnalyzer(roi_size=0)
+
+
+def test_event_threshold_measured_from_the_trace_baseline():
+    """Regression: the threshold was threshold x std(dF/F0) measured from zero, but dF/F0 sits above zero
+    (F0 is a low percentile), so noise crossed it. It is now median + threshold x robust sigma (1.4826 x MAD)."""
+    rng = np.random.default_rng(4)
+    dff = 0.1 + rng.normal(0, 0.01, 400)  # offset noise, no events
+    a = CalciumROIAnalyzer(roi_size=5)
+    assert a.detect_peaks(dff, threshold=3.0) == []
+    dff[200:206] += 0.2  # one real event
+    ev = a.detect_peaks(dff, threshold=3.0)
+    assert len(ev) == 1 and 200 <= ev[0]['peak_frame'] <= 205
+
+
+def test_demo_noise_events_mostly_rejected():
+    """On the synthetic demo (4 placed events) nearly all detections are placed events."""
+    from piezo1_magik.web.demo import run_roi, demo
+    placed = demo()['events']
+    out = run_roi()
+    hits = false = 0
+    for t in out['tracks']:
+        for e in t['events']:
+            real = any(p['track_id'] == t['track_id'] and p['start_frame'] <= e['peak_frame'] <= p['end_frame']
+                       for p in placed)
+            hits += real
+            false += not real
+    assert hits >= 3 and false <= 2, (hits, false)  # was 4 hits and 16 false with the zero-based threshold
+
+
+def test_no_events_at_all_when_a_track_reaches_the_image_edge():
+    rng = np.random.default_rng(1)
+    movie = rng.normal(500, 5, size=(60, 30, 30))
+    xs = np.r_[np.full(30, 15.0), np.linspace(15, 0, 10), np.zeros(20)]
+    track = pd.DataFrame({'frame': range(60), 'x': xs, 'y': np.full(60, 15.0)})
+    r = CalciumROIAnalyzer(roi_size=5).analyze_track(movie, track, track_id=0)
+    assert r['events'] == [], r['events']

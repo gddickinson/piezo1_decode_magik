@@ -51,9 +51,10 @@ STAGES = [
             'F0: the 10th percentile of F (baseline_method "percentile"); "rolling" uses the median of a centred rolling '
             'minimum (window min(50, n/5) frames); anything else, the mean.',
             'dF/F0 = (F - F0) / F0.',
-            'Events: scipy.signal.find_peaks on dF/F0 with height = threshold x std(dF/F0) (default 2) and distance = '
-            'min_distance frames (default 5); each event extends while dF/F0 stays above half that height and is kept '
-            'if it lasts at least min_duration frames (default 2).',
+            'Events: scipy.signal.find_peaks on dF/F0 with height = median + threshold x sigma, sigma = 1.4826 x MAD '
+            '(robust noise; threshold default 2), and distance = min_distance frames (default 5); each event extends '
+            'while dF/F0 stays above median + threshold x sigma / 2 and is kept if it lasts at least min_duration '
+            'frames (default 2).',
         ],
     },
 ]

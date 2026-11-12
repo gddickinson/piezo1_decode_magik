@@ -23,7 +23,7 @@ calcium:
   baseline_percentile: 10.0  # For percentile method
   
   # Event detection
-  event_threshold: 2.0  # Detection threshold (× std)
+  event_threshold: 2.0  # Detection threshold (× robust noise σ = 1.4826·MAD, above the median of ΔF/F₀)
   min_duration: 2  # Minimum event duration (frames)
   min_distance: 5  # Minimum distance between events (frames)
 

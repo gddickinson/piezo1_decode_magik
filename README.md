@@ -266,6 +266,11 @@ Data and results produced before these fixes are not directly comparable with ne
   lowering F there (and, through the low-percentile F₀, raising ΔF/F₀ elsewhere, which produced false events).
   Out-of-image pixels are now excluded from the mean, and such frames are flagged (`edge_roi` in
   `calcium_traces.csv`, `edge` in `analyze_track`).
+- **Calcium event threshold.** `detect_peaks` required ΔF/F₀ > threshold × std(ΔF/F₀), measured from zero; since
+  F₀ is a low percentile, ΔF/F₀ sits above zero and noise crossed it (16 of 20 detections on the web demo were
+  noise). Peaks must now rise threshold × σ above the trace's median, with σ = 1.4826 × MAD (robust noise
+  estimate); event edges are at half that height above the median. On the demo: 4 detections inside placed events,
+  2 elsewhere. Event counts in `calcium_events.csv` change.
 
 ---
 

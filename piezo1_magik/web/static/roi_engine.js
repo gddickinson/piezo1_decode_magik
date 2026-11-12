@@ -15,29 +15,32 @@ export function roundHalfEven(v) {
   return f % 2 === 0 ? f : f + 1;
 }
 
-// Mean of CalciumROIAnalyzer.extract_roi: zero-padded roi_size x roi_size square around the rounded centre;
-// all zeros when the centre is not finite or the square misses the image.
+// CalciumROIAnalyzer.roi_mean: mean over the in-image pixels of the roi_size x roi_size square around the rounded
+// centre, and their number; [NaN, 0] when the square misses the image or the centre is not finite.
 export function roiMean(movie, shape, frame, x, y, roiSize) {
   const [, H, W] = shape, half = Math.floor(roiSize / 2);
-  if (!Number.isFinite(x) || !Number.isFinite(y)) return 0;
-  const xi = roundHalfEven(x), yi = roundHalfEven(y);
-  const y0 = Math.max(0, yi - half), y1 = Math.min(H, yi + half + 1);
-  const x0 = Math.max(0, xi - half), x1 = Math.min(W, xi + half + 1);
-  if (y1 <= y0 || x1 <= x0) return 0;
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return [NaN, 0];
+  const y0 = roundHalfEven(y) - half, x0 = roundHalfEven(x) - half;
+  const ya = Math.max(0, y0), yb = Math.min(H, y0 + roiSize), xa = Math.max(0, x0), xb = Math.min(W, x0 + roiSize);
+  if (yb <= ya || xb <= xa) return [NaN, 0];
   let s = 0;
   const base = frame * H * W;
-  for (let r = y0; r < y1; r++) for (let c = x0; c < x1; c++) s += movie[base + r * W + c];
-  return s / (roiSize * roiSize);
+  for (let r = ya; r < yb; r++) for (let c = xa; c < xb; c++) s += movie[base + r * W + c];
+  const n = (yb - ya) * (xb - xa);
+  return [s / n, n];
 }
 
-// extract_trace: F per frame (NaN where the track has no detection). track = [{frame, x, y}]
+// extract_trace_flags: F per frame (NaN where the track has no detection) and edge flags. track = [{frame, x, y}]
 export function extractTrace(movie, shape, track, roiSize) {
-  const T = shape[0], trace = new Array(T).fill(NaN);
+  const T = shape[0], trace = new Array(T).fill(NaN), edge = new Array(T).fill(false);
   for (const p of track) {
     const f = Math.trunc(p.frame);
-    if (f >= 0 && f < T) trace[f] = roiMean(movie, shape, f, p.x, p.y, roiSize);
+    if (f >= 0 && f < T) {
+      const [m, n] = roiMean(movie, shape, f, p.x, p.y, roiSize);
+      trace[f] = m; edge[f] = n < roiSize * roiSize;
+    }
   }
-  return trace;
+  return { trace, edge };
 }
 
 // np.percentile, default 'linear' method (with numpy's lerp form)
@@ -142,9 +145,9 @@ export function runRoi(movie, shape, tracks, params = {}) {
   const out = ids.map(id => {
     const rows = [];
     tracks.track_id.forEach((t, i) => { if (t === id) rows.push({ frame: tracks.frame[i], x: tracks.x[i], y: tracks.y[i] }); });
-    const trace = extractTrace(movie, shape, rows, p.roi_size);
+    const { trace, edge } = extractTrace(movie, shape, rows, p.roi_size);
     const dff = deltaFOverF(trace, p.baseline_method, p.baseline_percentile);
-    return { track_id: id, baseline: computeBaseline(trace, p.baseline_method, p.baseline_percentile), trace, dff,
+    return { track_id: id, baseline: computeBaseline(trace, p.baseline_method, p.baseline_percentile), trace, dff, edge,
       events: detectPeaks(dff, p.threshold, p.min_duration, p.min_distance) };
   });
   return { params: p, computed_by: 'javascript', tracks: out };

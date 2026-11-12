@@ -69,12 +69,12 @@ def roi_on(movie, tracks, params=None):
     out = []
     for tid in sorted(tracks['track_id'].unique()):
         tr = tracks[tracks['track_id'] == tid]
-        trace = a.extract_trace(movie, tr)
+        trace, edge = a.extract_trace_flags(movie, tr)
         dff = a.compute_delta_f_over_f(trace)
         events = a.detect_peaks(dff, threshold=float(p['threshold']), min_duration=int(p['min_duration']),
                                 min_distance=int(p['min_distance']))
         out.append({'track_id': int(tid), 'baseline': a.compute_baseline(trace), 'trace': trace, 'dff': dff,
-                    'events': events})
+                    'edge': edge.tolist(), 'events': events})
     return clean({'params': p, 'computed_by': 'python', 'tracks': out})
 
 

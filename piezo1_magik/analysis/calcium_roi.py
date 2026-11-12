@@ -7,7 +7,8 @@ Much simpler than semantic segmentation!
 For each tracked punctum:
 1. Extract NxN pixel ROI centered at (x, y)
 2. Compute mean intensity over ROI
-3. Generate fluorescence trace F(t)
+3. Generate fluorescence trace F(t) (pixels outside the image are excluded, and such
+   edge ROIs are flagged)
 4. Calculate ΔF/F₀
 5. Detect peaks → calcium events
 """
@@ -53,62 +54,57 @@ class CalciumROIAnalyzer:
         """
         Extract ROI from image at position (x, y).
 
+        Coordinates are pixel centres (x = column, y = row); the ROI is the roi_size x roi_size square centred
+        on the pixel nearest (x, y) (np.round, half to even).
+
         Args:
             image: (H, W) image
             x, y: Center position (sub-pixel OK)
 
         Returns:
-            roi: (roi_size, roi_size) extracted region
-                 Returns zeros if out of bounds or inputs invalid
+            roi: (roi_size, roi_size) float array. Pixels outside the image are NaN (they are not measured,
+                 so they must not count as zero intensity); all NaN if the ROI misses the image or x/y is
+                 not finite.
         """
-        # Input validation
         if image.ndim != 2:
             raise ValueError(f"Expected 2D image, got shape {image.shape}")
-        if np.isnan(x) or np.isnan(y):
-            return np.zeros((self.roi_size, self.roi_size))
+        roi = np.full((self.roi_size, self.roi_size), np.nan)
         if not np.isfinite(x) or not np.isfinite(y):
-            return np.zeros((self.roi_size, self.roi_size))
+            return roi
 
         H, W = image.shape
-        
-        # Round to nearest pixel
         x_int = int(np.round(x))
         y_int = int(np.round(y))
-        
-        # Extract ROI
-        y_min = max(0, y_int - self.half_size)
-        y_max = min(H, y_int + self.half_size + 1)
-        x_min = max(0, x_int - self.half_size)
-        x_max = min(W, x_int + self.half_size + 1)
-        
-        # Entirely outside the image: a negative slice end would wrap around in NumPy
-        if y_max <= y_min or x_max <= x_min:
-            return np.zeros((self.roi_size, self.roi_size))
+        y0, x0 = y_int - self.half_size, x_int - self.half_size  # top-left of the full ROI
 
-        roi = image[y_min:y_max, x_min:x_max]
-        
-        # Pad if near edge
-        if roi.shape != (self.roi_size, self.roi_size):
-            padded = np.zeros((self.roi_size, self.roi_size))
-            h, w = roi.shape
-            padded[:h, :w] = roi
-            return padded
-        
+        y_min, y_max = max(0, y0), min(H, y0 + self.roi_size)
+        x_min, x_max = max(0, x0), min(W, x0 + self.roi_size)
+        # Entirely outside the image (also avoids NumPy's wrap-around for negative slice ends)
+        if y_max <= y_min or x_max <= x_min:
+            return roi
+        roi[y_min - y0:y_max - y0, x_min - x0:x_max - x0] = image[y_min:y_max, x_min:x_max]
         return roi
-    
-    def extract_trace(self,
-                     calcium_movie: np.ndarray,
-                     track: pd.DataFrame) -> np.ndarray:
+
+    def roi_mean(self, image: np.ndarray, x: float, y: float) -> Tuple[float, int]:
+        """Mean intensity over the in-image pixels of the ROI and their number (NaN, 0 if none)."""
+        roi = self.extract_roi(image, x, y)
+        n_valid = int(np.isfinite(roi).sum())
+        return (float(np.nanmean(roi)) if n_valid else np.nan), n_valid
+
+    def extract_trace_flags(self,
+                            calcium_movie: np.ndarray,
+                            track: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Extract calcium fluorescence trace for one track.
+        Calcium trace for one track and, per frame, whether the ROI was cut by the image edge.
 
         Args:
             calcium_movie: (T, H, W) calcium channel movie
             track: DataFrame with columns ['frame', 'x', 'y']
 
         Returns:
-            trace: (T,) fluorescence intensity trace
-                   NaN for frames where track doesn't exist
+            trace: (T,) mean ROI intensity over in-image pixels; NaN where the track has no detection
+                   or its ROI lies entirely outside the image
+            edge: (T,) bool, True where part of the ROI lies outside the image (fewer pixels averaged)
 
         Raises:
             ValueError: If calcium_movie is not 3D or track lacks required columns
@@ -122,18 +118,26 @@ class CalciumROIAnalyzer:
 
         T = calcium_movie.shape[0]
         trace = np.full(T, np.nan)
-        
-        for _, row in track.iterrows():
-            frame = int(row['frame'])
-            x = row['x']
-            y = row['y']
-            
+        edge = np.zeros(T, dtype=bool)
+        full = self.roi_size * self.roi_size
+        for frame, x, y in zip(track['frame'].to_numpy(), track['x'].to_numpy(float), track['y'].to_numpy(float)):
+            frame = int(frame)
             if 0 <= frame < T:
-                roi = self.extract_roi(calcium_movie[frame], x, y)
-                trace[frame] = roi.mean()
-        
-        return trace
-    
+                trace[frame], n_valid = self.roi_mean(calcium_movie[frame], x, y)
+                edge[frame] = n_valid < full
+        return trace, edge
+
+    def extract_trace(self,
+                     calcium_movie: np.ndarray,
+                     track: pd.DataFrame) -> np.ndarray:
+        """
+        Extract calcium fluorescence trace for one track (see extract_trace_flags).
+
+        Returns:
+            trace: (T,) fluorescence intensity trace; NaN for frames where the track doesn't exist
+        """
+        return self.extract_trace_flags(calcium_movie, track)[0]
+
     def compute_baseline(self, trace: np.ndarray) -> float:
         """
         Compute baseline fluorescence F₀.
@@ -270,8 +274,8 @@ class CalciumROIAnalyzer:
         Returns:
             results: Dict with 'trace', 'dff', 'events'
         """
-        # Extract trace
-        trace = self.extract_trace(calcium_movie, track)
+        # Extract trace (and which frames had an ROI cut by the image edge)
+        trace, edge = self.extract_trace_flags(calcium_movie, track)
         
         # Compute ΔF/F₀
         dff = self.compute_delta_f_over_f(trace)
@@ -280,7 +284,9 @@ class CalciumROIAnalyzer:
             'track_id': track_id,
             'trace': trace,
             'dff': dff,
-            'baseline': self.compute_baseline(trace)
+            'baseline': self.compute_baseline(trace),
+            'edge': edge,
+            'n_edge_frames': int(edge.sum())
         }
         
         # Detect events
@@ -325,14 +331,15 @@ def analyze_all_tracks(calcium_movie: np.ndarray,
         )
         
         # Store traces
-        for frame, (f, dff) in enumerate(zip(results['trace'], results['dff'])):
+        for frame, (f, dff, edge) in enumerate(zip(results['trace'], results['dff'], results['edge'])):
             if not np.isnan(f):
                 all_traces.append({
                     'track_id': track_id,
                     'frame': frame,
                     'fluorescence': f,
                     'dff': dff,
-                    'baseline': results['baseline']
+                    'baseline': results['baseline'],
+                    'edge_roi': bool(edge)  # ROI cut by the image edge: fewer pixels averaged
                 })
         
         # Store events

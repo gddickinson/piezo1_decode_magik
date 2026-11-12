@@ -63,7 +63,8 @@ route('roi', async () => {
   <h2>Detected events</h2><div id="events"></div>
   <h2>Reading the result</h2>
   <ul class="small">
-    <li>The generator clips directed tracks at the image border; there <code>extract_roi</code> pads the part of the ROI outside the image with zeros, so F drops and F₀ (a low percentile) drops with it. Watch those tracks for events that are artefacts of the padding.</li>
+    <li>The generator clips directed tracks at the image border. There the ROI is partly outside the image: those pixels are left out of the
+      mean (not counted as zero) and the frames are flagged as edge ROIs, so F is not biased by the border.</li>
     <li>The event threshold is threshold × std(ΔF/F₀) measured from zero, while F₀ is the 10th percentile, so ΔF/F₀ sits above zero on average and noise peaks can cross a threshold of 2. The dashed boxes mark where events were really placed.</li>
   </ul>`;
   const view = document.getElementById('view'), off = document.createElement('canvas');
@@ -99,7 +100,8 @@ route('roi', async () => {
     document.getElementById('charts').innerHTML = `
       <div class="two"><div class="panel"><h3>F(t), track ${st.track}</h3>${lineChart([{ y: r.trace, colour: colour(st.track) }],
         { xlabel: 'frame', ylabel: 'F (ADU)', bands: [...bands, ...truth], label: `fluorescence trace of track ${st.track}` })}
-        <p class="small mute">F₀ = ${fmt(r.baseline, 1)} ADU · ${n} of ${T} frames have a detection (gaps are blinks)</p></div>
+        <p class="small mute">F₀ = ${fmt(r.baseline, 1)} ADU · ${n} of ${T} frames have a detection (gaps are blinks)
+          · ${r.edge.filter(Boolean).length} edge-ROI frames (ROI partly outside the image)</p></div>
       <div class="panel"><h3>ΔF/F₀, track ${st.track}</h3>${lineChart([{ y: r.dff, colour: colour(st.track), marks: r.events.map(e => e.peak_frame) }],
         { xlabel: 'frame', ylabel: 'ΔF/F₀', thr, bands: [...bands, ...truth], label: `dF/F0 of track ${st.track}` })}
         <p class="small mute">dashed line: threshold ${thr === undefined ? '' : fmt(thr)} · shaded: detected events · dashed boxes: events placed in the demo</p></div></div>`;

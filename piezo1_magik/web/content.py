@@ -46,7 +46,8 @@ STAGES = [
         'output': 'calcium_traces.csv (F, dF/F0, F0 per track and frame), calcium_events.csv',
         'points': [
             'F(t): mean of a roi_size x roi_size pixel square (default 5 x 5 = 0.65 x 0.65 um) centred on the rounded '
-            'punctum position; frames where the track has no detection are NaN.',
+            'punctum position; pixels outside the image are left out of the mean and the frame is flagged as an edge '
+            'ROI (edge_roi in calcium_traces.csv); frames where the track has no detection are NaN.',
             'F0: the 10th percentile of F (baseline_method "percentile"); "rolling" uses the median of a centred rolling '
             'minimum (window min(50, n/5) frames); anything else, the mean.',
             'dF/F0 = (F - F0) / F0.',

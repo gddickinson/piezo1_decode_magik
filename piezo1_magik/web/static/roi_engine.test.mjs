@@ -24,6 +24,7 @@ for (const run of fx.roi.runs) {
     close(j.baseline, py.baseline, `${tag} baseline`);
     py.trace.forEach((v, k) => { close(j.trace[k], v, `${tag} F[${k}]`); checks++; });
     py.dff.forEach((v, k) => { close(j.dff[k], v, `${tag} dff[${k}]`); checks++; });
+    assert.deepEqual(j.edge, py.edge, `${tag} edge flags`);
     assert.equal(j.events.length, py.events.length, `${tag} number of events`);
     py.events.forEach((e, k) => {
       for (const key of ['frame', 'peak_frame', 'duration', 'end_frame']) assert.equal(j.events[k][key], e[key], `${tag} ${key}`);

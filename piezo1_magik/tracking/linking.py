@@ -72,7 +72,8 @@ def greedy_linking(edge_probs, edge_index, threshold=0.5):
 
     node_to_track, track_counter = {}, 0
     all_nodes = set(forward_links) | set(backward_links)
-    for start_node in [n for n in all_nodes if n not in backward_links]:
+    # sorted: track ids no longer depend on Python's set iteration order
+    for start_node in sorted(n for n in all_nodes if n not in backward_links):
         if start_node in node_to_track:
             continue
         current = start_node
@@ -80,7 +81,7 @@ def greedy_linking(edge_probs, edge_index, threshold=0.5):
             node_to_track[current] = track_counter
             current = forward_links.get(current, None)
         track_counter += 1
-    for node in all_nodes:
+    for node in sorted(all_nodes):
         if node not in node_to_track:
             node_to_track[node] = track_counter
             track_counter += 1

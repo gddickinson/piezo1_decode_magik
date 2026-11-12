@@ -38,3 +38,18 @@
 - JS ports (roi_engine.js, psf_engine.js) and the fixture updated with each fix; all node tests pass.
 - Still open: the event threshold uses whole-trace median/MAD (no sliding window; drift should go through
   baseline_method='rolling'); 04's max_frame_gap 5 vs MAGIK training gap 2 is documented, not changed.
+
+## 2026-11-12 (follow-up) -- noise window for events, MAGIK frame gap
+- `04_run_pipeline.py` `max_frame_gap` default 5 -> 2 (configs/pipeline.yaml and `track_with_magik`), equal to MAGIK's
+  training gap (`magik_training.yaml` `max_temporal_gap`); the gap is an MAGIK edge feature, so longer edges were out of
+  the training range. Still configurable; a test runs 04's `main()` (stubbed models) and checks the config value and a
+  `--max_frame_gap` override reach `build_candidate_graph`.
+- `detect_peaks(noise_window=N)`: rolling median + 1.4826 MAD over N frames centred on each frame (NaN frames count
+  but give no value; < 3 values or MAD 0 -> whole-trace values); 0/None = whole trace (old behaviour). Default 61
+  (`DEFAULT_NOISE_WINDOW`), chosen with `scripts/simulate_noise_window.py` (seed 0, 200 traces x 300 frames per
+  scenario, events 3-10 noise sigma): F1 with drift 0.482 (whole) / 0.872 (31) / 0.877 (41) / 0.865 (61) / 0.828 (81);
+  without drift 0.964 / 0.899 / 0.927 / 0.950 / 0.955. 61 has the best mean over both scenarios (seeds 0, 1, 2).
+  In pipeline.yaml (`calcium.noise_window`), 04 `--noise_window`, the web app (form field, rolling threshold line) and
+  the JS port (`roi_engine.js` `noiseLevels`/`detectPeaks`, fixture `noise` cases + 5 more ROI parameter sets).
+  Web demo events unchanged at the default (4 in placed events, 2 elsewhere).
+- Tests: pytest tests 66 passed; CI=1 test_web 14 passed, 1 skipped; node roi 8617, track 70, psf 1240 checks.

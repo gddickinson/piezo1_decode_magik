@@ -22,13 +22,14 @@ function form(p) {
     <fieldset><legend>Events (detect_peaks)</legend>
       <label for="threshold">threshold (× robust σ of ΔF/F₀, above its median)</label><input id="threshold" name="threshold" type="number" min="0" step="0.1" value="${p.threshold}">
       <label for="min_duration">min_duration (frames)</label><input id="min_duration" name="min_duration" type="number" min="1" step="1" value="${p.min_duration}">
-      <label for="min_distance">min_distance between peaks (frames)</label><input id="min_distance" name="min_distance" type="number" min="1" step="1" value="${p.min_distance}"></fieldset>
+      <label for="min_distance">min_distance between peaks (frames)</label><input id="min_distance" name="min_distance" type="number" min="1" step="1" value="${p.min_distance}">
+      <label for="noise_window">noise_window (frames; median and σ over this many frames around each frame, 0 = whole trace)</label><input id="noise_window" name="noise_window" type="number" min="0" step="1" value="${p.noise_window}"></fieldset>
     <button type="submit">Run analysis</button></form>`;
 }
 
 function readForm() {
   const f = new FormData(document.getElementById('roiform')), p = {};
-  for (const k of ['roi_size', 'baseline_percentile', 'threshold', 'min_duration', 'min_distance']) {
+  for (const k of ['roi_size', 'baseline_percentile', 'threshold', 'min_duration', 'min_distance', 'noise_window']) {
     const v = Number(f.get(k));
     if (!Number.isFinite(v)) throw new Error(`${k} must be a number`);
     p[k] = v;
@@ -37,6 +38,7 @@ function readForm() {
   if (!Number.isInteger(p.min_duration) || p.min_duration < 1 || !Number.isInteger(p.min_distance) || p.min_distance < 1) {
     throw new Error('min_duration and min_distance must be whole numbers of frames, at least 1');
   }
+  if (!Number.isInteger(p.noise_window) || p.noise_window < 0) throw new Error('noise_window must be a whole number of frames, 0 or more');
   return p;
 }
 
@@ -48,7 +50,8 @@ route('roi', async () => {
   app().innerHTML = `
   <h1>ROI calcium analysis</h1>
   <p class="lead">Stage 3: for every tracked punctum, the mean calcium intensity in a small square ROI gives F(t), F₀ is a low
-    percentile of F, ΔF/F₀ = (F − F₀)/F₀, and peaks that rise threshold × σ above the trace's median (σ: robust noise, 1.4826 × MAD) are calcium events.</p>
+    percentile of F, ΔF/F₀ = (F − F₀)/F₀, and peaks that rise threshold × σ above the trace's median (σ: robust noise, 1.4826 × MAD) are calcium events.
+    Median and σ are taken over a rolling window of noise_window frames (default 61), so a slowly drifting baseline does not move the threshold.</p>
   <p class="demo-label">${esc(d.description)} The ROI analysis uses the ground-truth tracks.</p>
   <div class="side"><div>${form(info.roi_defaults)}<p id="roimsg" class="small"></p></div>
   <div>
@@ -67,6 +70,10 @@ route('roi', async () => {
     <li>Events must rise threshold × σ above the trace's median, where σ = 1.4826 × MAD is a noise estimate that the events themselves barely
       affect. (Until 2026-11-12 the threshold was threshold × std(ΔF/F₀) measured from zero; with F₀ a low percentile, ΔF/F₀ sits above zero and
       noise peaks crossed it: 16 of 20 detections on this demo were noise.) The dashed boxes mark where events were really placed.</li>
+    <li>F₀ is one number per trace, so a slow baseline drift stays in ΔF/F₀. With noise_window = N the median and σ are taken over the N frames
+      around each frame, and the dashed threshold follows the drift; 0 uses the whole trace. The default, 61 frames, came from a seeded simulation
+      (scripts/simulate_noise_window.py: event F1 0.87 with drift vs 0.48 for the whole trace, 0.95 vs 0.96 without drift). The demo has no drift
+      and gives the same events with 0 or 61.</li>
   </ul>`;
   const view = document.getElementById('view'), off = document.createElement('canvas');
   const caScale = v => (v - 300) / (900 - 300) * 255;
@@ -95,7 +102,10 @@ route('roi', async () => {
     const r = st.res.tracks.find(t => t.track_id === st.track);
     const truth = d.true_events.filter(e => e.track_id === st.track).map(e => [e.start_frame, e.end_frame, 'truth']);
     const bands = r.events.map(e => [e.frame, e.end_frame, 'ev']);
-    const lv = noiseLevels(r.dff, st.res.params.threshold), thr = lv ? lv.thr : undefined;
+    const P = st.res.params, lv = noiseLevels(r.dff, P.threshold, P.noise_window), thr = lv ? lv.thr : undefined;
+    const thrText = !lv ? '' : P.noise_window
+      ? `median + ${P.threshold} × robust σ over a rolling ${P.noise_window}-frame window (whole trace: median ${fmt(lv.global.level)}, σ ${fmt(lv.global.sigma)})`
+      : `${fmt(thr[0])} = median ${fmt(lv.level[0])} + ${P.threshold} × robust σ ${fmt(lv.sigma[0])}, whole trace`;
     const n = rowsOf(st.track).length;
     document.getElementById('charts').innerHTML = `
       <div class="two"><div class="panel"><h3>F(t), track ${st.track}</h3>${lineChart([{ y: r.trace, colour: colour(st.track) }],
@@ -104,7 +114,7 @@ route('roi', async () => {
           · ${r.edge.filter(Boolean).length} edge-ROI frames (ROI partly outside the image)</p></div>
       <div class="panel"><h3>ΔF/F₀, track ${st.track}</h3>${lineChart([{ y: r.dff, colour: colour(st.track), marks: r.events.map(e => e.peak_frame) }],
         { xlabel: 'frame', ylabel: 'ΔF/F₀', thr, bands: [...bands, ...truth], label: `dF/F0 of track ${st.track}` })}
-        <p class="small mute">dashed line: threshold ${thr === undefined ? '' : `${fmt(thr)} = median ${fmt(lv.level)} + ${st.res.params.threshold} × robust σ ${fmt(lv.sigma)}`} · shaded: detected events · dashed boxes: events placed in the demo</p></div></div>`;
+        <p class="small mute">dashed line: threshold ${thrText} · shaded: detected events · dashed boxes: events placed in the demo</p></div></div>`;
   }
   function drawEvents() {
     const all = st.res.tracks.flatMap(t => t.events.map(e => ({ ...e, track_id: t.track_id })));

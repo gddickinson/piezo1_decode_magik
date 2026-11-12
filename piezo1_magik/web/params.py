@@ -19,7 +19,7 @@ UNITS = {
     'roi_size': 'px (side of square ROI)',  # "ROI size (5x5 pixels)"
     'threshold': 'probability 0-1', 'detection_threshold': 'probability 0-1', 'link_threshold': 'probability 0-1',
     'event_threshold': 'x robust sigma above median dF/F0',  # detect_peaks docstring
-    'min_duration': 'frames', 'min_distance': 'frames', 'viz_track_length': 'frames',
+    'min_duration': 'frames', 'min_distance': 'frames', 'noise_window': 'frames (0 = whole trace)', 'viz_track_length': 'frames',
     'baseline_percentile': 'percentile',
     'min_photons': 'photons', 'photons_mean': 'photons', 'photons_std': 'photons',
     'baseline': 'ADU', 'read_noise': 'electrons (added to ADU 1:1)',  # 01 help; add_noise adds it directly

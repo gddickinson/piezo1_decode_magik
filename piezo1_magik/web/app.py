@@ -63,6 +63,7 @@ class RoiParams(BaseModel):
     threshold: float = Field(2.0, ge=0)
     min_duration: int = Field(2, ge=1)
     min_distance: int = Field(5, ge=1)
+    noise_window: int = Field(demo.ROI_DEFAULTS["noise_window"], ge=0, le=10000)  # frames; 0 = whole trace
 
     @field_validator("roi_size")
     @classmethod

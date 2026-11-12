@@ -116,3 +116,34 @@ def test_max_frame_gap_from_config_reaches_the_linker(monkeypatch, tmp_path):
     cfg.write_text(DEFAULT_CONFIG.read_text().replace("max_frame_gap: 2", "max_frame_gap: 5"))
     assert _run_04_main(monkeypatch, tmp_path, ['--config', str(cfg)]) == [(5, [1, 3, 4, 5])]
     assert _run_04_main(monkeypatch, tmp_path, ['--config', str(cfg), '--max_frame_gap', '3']) == [(3, [1, 3])]
+
+
+def test_noise_window_from_config_and_cli_reaches_event_detection(monkeypatch):
+    """calcium.noise_window (default 61) and --noise_window reach detect_peaks through analyze_all_tracks."""
+    import piezo1_magik.analysis.calcium_roi as roi
+    assert load_pipeline_config(DEFAULT_CONFIG)['noise_window'] == 61
+    seen = []
+    real = roi.CalciumROIAnalyzer.detect_peaks
+
+    def spy(self, dff, **kw):
+        seen.append(kw['noise_window'])
+        return real(self, dff, **kw)
+
+    monkeypatch.setattr(roi.CalciumROIAnalyzer, 'detect_peaks', spy)
+    movie = np.random.default_rng(0).normal(500, 5, size=(20, 12, 12))
+    tracks = pd.DataFrame({'track_id': 0, 'frame': range(20), 'x': 6.0, 'y': 6.0})
+    keys = ('roi_size', 'baseline_method', 'baseline_percentile', 'event_threshold', 'min_duration', 'min_distance',
+            'noise_window')
+    for cli, want in (({}, 61), ({'noise_window': 0}, 0), ({'noise_window': 15}, 15)):
+        cfg = resolve(cli)
+        roi.analyze_all_tracks(movie, tracks, **{k: cfg[k] for k in keys})
+        assert seen[-1] == want
+
+
+def test_04_parser_has_noise_window():
+    pytest.importorskip("torch")
+    spec = importlib.util.spec_from_file_location("run_pipeline_04", ROOT / "scripts" / "04_run_pipeline.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert mod.build_parser().parse_args(['--input', 'm.tif', '--noise_window', '0']).noise_window == 0
+    assert mod.build_parser().parse_args(['--input', 'm.tif']).noise_window is None  # None: take the config value

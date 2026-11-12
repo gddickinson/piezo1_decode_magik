@@ -33,6 +33,10 @@ calcium:
   event_threshold: 2.0  # Detection threshold (× robust noise σ = 1.4826·MAD, above the median of ΔF/F₀)
   min_duration: 2  # Minimum event duration (frames)
   min_distance: 5  # Minimum distance between events (frames)
+  # Median and MAD for the threshold are taken over this many frames centred on each frame, so slow baseline
+  # drift (F0 is one number per trace) does not move the threshold; 0 or null = whole trace. 61 was chosen with
+  # scripts/simulate_noise_window.py (seeded): F1 0.87 with drift vs 0.48 for the whole trace, 0.95 vs 0.96 without.
+  noise_window: 61  # Rolling window for the noise estimate (frames); 0 or null = whole trace
 
 # Output options
 output:

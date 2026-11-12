@@ -204,7 +204,7 @@ def analyze_calcium(calcium_movie, tracks_df, **calcium_options):
         calcium_movie: (T, H, W) calcium channel
         tracks_df: Tracks DataFrame
         calcium_options: roi_size, baseline_method, baseline_percentile, event_threshold, min_duration,
-            min_distance (passed to analyze_all_tracks)
+            min_distance, noise_window (passed to analyze_all_tracks)
 
     Returns:
         traces_df: Fluorescence traces
@@ -309,6 +309,9 @@ def build_parser():
                         help='Event threshold, x robust sigma above median dF/F0 (calcium.event_threshold)')
     parser.add_argument('--min_duration', type=int, help='Minimum event duration (frames) (calcium.min_duration)')
     parser.add_argument('--min_distance', type=int, help='Minimum frames between events (calcium.min_distance)')
+    parser.add_argument('--noise_window', type=int,
+                        help='Rolling window (frames) for the event noise estimate, 0 = whole trace '
+                             '(calcium.noise_window)')
     for name in ('save_tracks', 'save_calcium_traces', 'save_events'):
         parser.add_argument(f'--{name}', action=argparse.BooleanOptionalAction, default=None,
                             help=f'Write the CSV (output.{name})')
@@ -405,7 +408,7 @@ def main(argv=None):
             calcium_movie,
             tracks_df,
             **{k: cfg[k] for k in ('roi_size', 'baseline_method', 'baseline_percentile', 'event_threshold',
-                                   'min_duration', 'min_distance')}
+                                   'min_duration', 'min_distance', 'noise_window')}
         )
     else:
         traces_df = pd.DataFrame()

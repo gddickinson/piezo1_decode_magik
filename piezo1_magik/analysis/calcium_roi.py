@@ -10,13 +10,21 @@ For each tracked punctum:
 3. Generate fluorescence trace F(t) (pixels outside the image are excluded, and such
    edge ROIs are flagged)
 4. Calculate ΔF/F₀
-5. Detect peaks → calcium events (threshold above the trace's median, in robust noise units)
+5. Detect peaks → calcium events (threshold above the median, in robust noise units; both taken over a
+   rolling window of noise_window frames, default 61, or the whole trace)
 """
 
 import numpy as np
 from scipy import ndimage, signal
 from typing import List, Dict, Tuple
 import pandas as pd
+
+# Default rolling window (frames) for the event-detection noise estimate (detect_peaks noise_window; None/0 = whole
+# trace). Chosen with scripts/simulate_noise_window.py (seeded, 300-frame traces, events 3-10 noise sigma): with baseline
+# drift, F1 0.48 for the whole trace vs 0.87 at 61 frames; without drift 0.96 vs 0.95. 61 had the best mean F1 of the
+# windows tried (11-201) over both scenarios for seeds 0-2. Windows much shorter than ~30 frames let the events
+# themselves raise the local median/MAD.
+DEFAULT_NOISE_WINDOW = 61
 
 
 class CalciumROIAnalyzer:
@@ -187,11 +195,57 @@ class CalciumROIAnalyzer:
         
         return dff
     
+    @staticmethod
+    def noise_levels(dff_trace: np.ndarray, noise_window=DEFAULT_NOISE_WINDOW) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Baseline level and robust noise sigma of a ΔF/F₀ trace, per frame.
+
+        level = median, sigma = 1.4826 x MAD (median absolute deviation from that median; equals the standard
+        deviation for Gaussian noise and is barely moved by the events themselves), over the finite values.
+
+        Args:
+            dff_trace: ΔF/F₀ trace (NaN where there is no measurement)
+            noise_window: None or 0: one level/sigma from the whole trace. N > 0: rolling statistics over the N
+                frames centred on each frame (frames i - N//2 .. i - N//2 + N - 1, cut at the trace ends; frames
+                without a measurement count towards N but contribute no value), so a slowly drifting baseline
+                does not shift the threshold. A frame whose window holds fewer than 3 values, or whose local
+                sigma is 0, uses the whole-trace values.
+
+        Returns:
+            level, sigma: (T,) arrays (all NaN if the trace has no finite value)
+        """
+        dff_trace = np.asarray(dff_trace, dtype=float)
+        T = len(dff_trace)
+        valid_mask = np.isfinite(dff_trace)
+        if valid_mask.sum() == 0:
+            return np.full(T, np.nan), np.full(T, np.nan)
+        valid = dff_trace[valid_mask]
+        g_level = float(np.median(valid))
+        g_sigma = 1.4826 * float(np.median(np.abs(valid - g_level)))
+        level, sigma = np.full(T, g_level), np.full(T, g_sigma)
+        if not noise_window:
+            return level, sigma
+        n = int(noise_window)
+        if n != noise_window or n < 1:
+            raise ValueError(f"noise_window must be None, 0 or a positive whole number of frames, got {noise_window}")
+        for i in range(T):
+            a = i - n // 2
+            w = dff_trace[max(0, a):max(0, a + n)]
+            w = w[np.isfinite(w)]
+            if len(w) < 3:
+                continue
+            lv = float(np.median(w))
+            sg = 1.4826 * float(np.median(np.abs(w - lv)))
+            if sg > 0:
+                level[i], sigma[i] = lv, sg
+        return level, sigma
+
     def detect_peaks(self,
                     dff_trace: np.ndarray,
                     threshold: float = 2.0,
                     min_duration: int = 2,
-                    min_distance: int = 5) -> List[Dict]:
+                    min_distance: int = 5,
+                    noise_window=DEFAULT_NOISE_WINDOW) -> List[Dict]:
         """
         Detect calcium events as peaks in ΔF/F₀ trace.
 
@@ -200,14 +254,18 @@ class CalciumROIAnalyzer:
         standard deviation for Gaussian noise; robust to the events themselves), a peak must reach
         level + threshold x sigma, and the event extends while ΔF/F₀ stays above level + threshold x sigma / 2.
         Peaks inside one supra-boundary span count as one event, located at the highest peak.
-        Both statistics are taken over the whole trace (frames with a detection), so a slowly drifting
-        baseline should be handled through F₀ (baseline_method='rolling').
+        With noise_window = N (default 61 frames) level and sigma are rolling values over N frames (see
+        noise_levels), so the threshold follows a slowly drifting baseline: F₀ is a single number for the whole
+        trace (both baseline methods), so drift stays in ΔF/F₀. With noise_window None or 0, level and sigma
+        are taken over the whole trace (frames with a measurement), and drift shifts how far peaks must rise.
 
         Args:
             dff_trace: ΔF/F₀ trace (NaN where the track has no measurement)
             threshold: Detection threshold (in units of the robust noise sigma above the median)
             min_duration: Minimum event duration (frames)
             min_distance: Minimum distance between peaks (frames)
+            noise_window: rolling window for level and sigma (frames; default DEFAULT_NOISE_WINDOW = 61), or
+                None/0 for the whole trace (the behaviour before noise_window existed)
 
         Returns:
             events: List of detected events
@@ -219,16 +277,15 @@ class CalciumROIAnalyzer:
         valid_mask = np.isfinite(dff_trace)
         if valid_mask.sum() == 0:
             return []
-        valid = dff_trace[valid_mask]
-        level = float(np.median(valid))
-        sigma = 1.4826 * float(np.median(np.abs(valid - level)))
-        if sigma == 0:
+        level, sigma = self.noise_levels(dff_trace, noise_window)
+        if not np.any(sigma > 0):
             return []
 
         # Frames without a measurement sit at the baseline level (they neither start nor extend an event)
         valid_trace = np.where(valid_mask, dff_trace, level)
-        threshold_abs = level + threshold * sigma
-        boundary = level + threshold * sigma / 2
+        # where sigma is 0 (constant trace, no local or global spread), nothing counts as above the noise
+        threshold_abs = np.where(sigma > 0, level + threshold * sigma, np.inf)
+        boundary = np.where(sigma > 0, level + threshold * sigma / 2, np.inf)
 
         peaks, _ = signal.find_peaks(valid_trace, height=threshold_abs, distance=min_distance)
 
@@ -236,10 +293,10 @@ class CalciumROIAnalyzer:
         for peak_idx in peaks:
             # Event boundaries: where the trace falls back below half the threshold height
             start = peak_idx
-            while start > 0 and valid_trace[start - 1] > boundary:
+            while start > 0 and valid_trace[start - 1] > boundary[start - 1]:
                 start -= 1
             end = peak_idx
-            while end < len(valid_trace) - 1 and valid_trace[end + 1] > boundary:
+            while end < len(valid_trace) - 1 and valid_trace[end + 1] > boundary[end + 1]:
                 end += 1
 
             duration = end - start + 1
@@ -267,7 +324,8 @@ class CalciumROIAnalyzer:
                      detect_events: bool = True,
                      threshold: float = 2.0,
                      min_duration: int = 2,
-                     min_distance: int = 5) -> Dict:
+                     min_distance: int = 5,
+                     noise_window=DEFAULT_NOISE_WINDOW) -> Dict:
         """
         Complete analysis for one track.
         
@@ -276,6 +334,7 @@ class CalciumROIAnalyzer:
             track: Track data
             track_id: Track identifier
             detect_events: Whether to detect events
+            threshold, min_duration, min_distance, noise_window: detect_peaks options
             
         Returns:
             results: Dict with 'trace', 'dff', 'events'
@@ -298,7 +357,7 @@ class CalciumROIAnalyzer:
         # Detect events
         if detect_events:
             events = self.detect_peaks(dff, threshold=threshold, min_duration=min_duration,
-                                       min_distance=min_distance)
+                                       min_distance=min_distance, noise_window=noise_window)
             results['events'] = events
             results['num_events'] = len(events)
         
@@ -312,7 +371,8 @@ def analyze_all_tracks(calcium_movie: np.ndarray,
                       baseline_percentile: float = 10.0,
                       event_threshold: float = 2.0,
                       min_duration: int = 2,
-                      min_distance: int = 5) -> Tuple[pd.DataFrame, pd.DataFrame]:
+                      min_distance: int = 5,
+                      noise_window=DEFAULT_NOISE_WINDOW) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     Analyze calcium for all tracks.
     
@@ -321,7 +381,8 @@ def analyze_all_tracks(calcium_movie: np.ndarray,
         tracks_df: DataFrame with ['track_id', 'frame', 'x', 'y']
         roi_size: ROI size (pixels, odd)
         baseline_method, baseline_percentile: F0 options (CalciumROIAnalyzer)
-        event_threshold, min_duration, min_distance: detect_peaks options (threshold, frames, frames)
+        event_threshold, min_duration, min_distance, noise_window: detect_peaks options (threshold, frames, frames,
+            frames or None/0 for the whole trace)
 
     Returns:
         traces_df: Fluorescence traces per track
@@ -345,7 +406,8 @@ def analyze_all_tracks(calcium_movie: np.ndarray,
             detect_events=True,
             threshold=event_threshold,
             min_duration=min_duration,
-            min_distance=min_distance
+            min_distance=min_distance,
+            noise_window=noise_window
         )
         
         # Store traces

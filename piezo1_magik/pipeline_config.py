@@ -24,6 +24,7 @@ OPTION_KEYS = {
     'event_threshold': ('calcium', 'event_threshold'),
     'min_duration': ('calcium', 'min_duration'),
     'min_distance': ('calcium', 'min_distance'),
+    'noise_window': ('calcium', 'noise_window'),
     'save_tracks': ('output', 'save_tracks'),
     'save_calcium_traces': ('output', 'save_calcium_traces'),
     'save_events': ('output', 'save_events'),

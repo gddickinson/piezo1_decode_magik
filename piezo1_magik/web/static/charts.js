@@ -3,12 +3,14 @@ import { esc } from './core.js';
 
 const nice = (lo, hi) => (hi > lo ? [lo, hi] : [lo - 1, hi + 1]);
 
-// series: [{ y: [...], cls/colour, label }]; opts: { xlabel, ylabel, thr, bands: [[x0, x1, cls]], h }
+// series: [{ y: [...], cls/colour, label }]; opts: { xlabel, ylabel, thr (number, or one value per point),
+// bands: [[x0, x1, cls]], h }
 export function lineChart(series, opts = {}) {
   const W = 640, H = opts.h || 220, L = 52, R = 10, T = 12, B = 34;
   const n = Math.max(...series.map(s => s.y.length));
   const vals = series.flatMap(s => s.y.filter(v => v !== null && !Number.isNaN(v)));
-  if (opts.thr !== undefined) vals.push(opts.thr);
+  const thrs = opts.thr === undefined ? [] : [].concat(opts.thr).filter(v => v !== null && Number.isFinite(v));
+  vals.push(...thrs);
   const [lo, hi] = nice(Math.min(...vals), Math.max(...vals));
   const X = i => L + (i / Math.max(1, n - 1)) * (W - L - R), Y = v => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
   const ticks = [lo, (lo + hi) / 2, hi];
@@ -19,7 +21,14 @@ export function lineChart(series, opts = {}) {
   for (let i = 0; i < n; i += Math.max(1, Math.ceil(n / 8))) svg += `<text x="${X(i)}" y="${H - B + 14}" text-anchor="middle">${i}</text>`;
   if (opts.xlabel) svg += `<text x="${(L + W - R) / 2}" y="${H - 4}" text-anchor="middle">${esc(opts.xlabel)}</text>`;
   if (opts.ylabel) svg += `<text x="12" y="${(T + H - B) / 2}" text-anchor="middle" transform="rotate(-90 12 ${(T + H - B) / 2})">${esc(opts.ylabel)}</text>`;
-  if (opts.thr !== undefined) svg += `<line class="thr" x1="${L}" x2="${W - R}" y1="${Y(opts.thr)}" y2="${Y(opts.thr)}"/>`;
+  if (Array.isArray(opts.thr)) {
+    let d = '', pen = false;
+    opts.thr.forEach((v, i) => {
+      if (v === null || !Number.isFinite(v)) { pen = false; return; }
+      d += `${pen ? 'L' : 'M'}${X(i).toFixed(1)},${Y(v).toFixed(1)}`; pen = true;
+    });
+    svg += `<path class="thr" d="${d}"/>`;
+  } else if (thrs.length) svg += `<line class="thr" x1="${L}" x2="${W - R}" y1="${Y(opts.thr)}" y2="${Y(opts.thr)}"/>`;
   for (const s of series) {
     let d = '', pen = false;
     s.y.forEach((v, i) => {

@@ -5,7 +5,7 @@
 // of T*H*W values, frame-major.
 
 export const ROI_DEFAULTS = { roi_size: 5, baseline_method: 'percentile', baseline_percentile: 10.0, threshold: 2.0,
-  min_duration: 2, min_distance: 5 };
+  min_duration: 2, min_distance: 5, noise_window: 61 };
 
 // np.round: round half to even
 export function roundHalfEven(v) {
@@ -90,7 +90,7 @@ export function deltaFOverF(trace, method, pct) {
   return trace.map(f => (f - F0) / F0);
 }
 
-// scipy.signal.find_peaks(x, height=hmin, distance=d): indices
+// scipy.signal.find_peaks(x, height=hmin, distance=d): indices. hmin: a number, or one value per sample
 export function findPeaks(x, hmin, distance) {
   const n = x.length, peaks = [];
   let i = 1;
@@ -102,7 +102,7 @@ export function findPeaks(x, hmin, distance) {
     }
     i++;
   }
-  let p = peaks.filter(k => x[k] >= hmin);
+  let p = peaks.filter(k => x[k] >= (Array.isArray(hmin) ? hmin[k] : hmin));
   if (distance != null && p.length > 1) {
     const d = Math.ceil(distance), keep = new Array(p.length).fill(true);
     const order = p.map((_, k) => k).sort((a, b) => x[p[a]] - x[p[b]] || a - b);
@@ -117,24 +117,44 @@ export function findPeaks(x, hmin, distance) {
   return p;
 }
 
-// Baseline level and robust noise of a dF/F0 trace, as in detect_peaks: median and 1.4826 x MAD of the finite values
-export function noiseLevels(dff, threshold = 2.0) {
-  const valid = dff.filter(v => v !== null && Number.isFinite(v));
+const finite = v => v !== null && Number.isFinite(v);
+const medMad = vals => { const m = median(vals); return [m, 1.4826 * median(vals.map(v => Math.abs(v - m)))]; };
+
+// CalciumROIAnalyzer.noise_levels plus the thresholds detect_peaks derives: per frame, the median (level) and
+// 1.4826 x MAD (sigma) of the finite dF/F0 values, over the whole trace (noiseWindow 0/null) or over the noiseWindow
+// frames i - N//2 .. i - N//2 + N - 1 (cut at the ends; < 3 values or sigma 0 -> whole-trace values).
+// thr/boundary are Infinity where sigma is 0. null if the trace has no finite value.
+export function noiseLevels(dff, threshold = 2.0, noiseWindow = null) {
+  const valid = dff.filter(finite), T = dff.length;
   if (!valid.length) return null;
-  const level = median(valid), sigma = 1.4826 * median(valid.map(v => Math.abs(v - level)));
-  return { level, sigma, thr: level + threshold * sigma, boundary: level + threshold * sigma / 2 };
+  const [gl, gs] = medMad(valid), level = new Array(T).fill(gl), sigma = new Array(T).fill(gs);
+  if (noiseWindow) {
+    if (!Number.isInteger(noiseWindow) || noiseWindow < 1) {
+      throw new Error(`noise_window must be 0 or a positive whole number of frames, got ${noiseWindow}`);
+    }
+    const n = noiseWindow;
+    for (let i = 0; i < T; i++) {
+      const a = i - Math.floor(n / 2), w = dff.slice(Math.max(0, a), Math.max(0, a + n)).filter(finite);
+      if (w.length < 3) continue;
+      const [l, s] = medMad(w);
+      if (s > 0) { level[i] = l; sigma[i] = s; }
+    }
+  }
+  const thr = level.map((l, i) => (sigma[i] > 0 ? l + threshold * sigma[i] : Infinity));
+  const boundary = level.map((l, i) => (sigma[i] > 0 ? l + threshold * sigma[i] / 2 : Infinity));
+  return { level, sigma, thr, boundary, global: { level: gl, sigma: gs } };
 }
 
 // detect_peaks: events [{frame, peak_frame, amplitude, duration, end_frame}]; threshold above the trace's median
-// in units of the robust noise sigma
-export function detectPeaks(dff, threshold = 2.0, minDuration = 2, minDistance = 5) {
-  const n = noiseLevels(dff, threshold);
-  if (!n || n.sigma === 0 || Number.isNaN(n.sigma)) return [];
-  const vt = dff.map(v => (v === null || !Number.isFinite(v) ? n.level : v)), events = [];
+// in units of the robust noise sigma (per frame with a rolling noiseWindow, see noiseLevels)
+export function detectPeaks(dff, threshold = 2.0, minDuration = 2, minDistance = 5, noiseWindow = ROI_DEFAULTS.noise_window) {
+  const n = noiseLevels(dff, threshold, noiseWindow);
+  if (!n || !n.sigma.some(s => s > 0)) return [];
+  const vt = dff.map((v, i) => (finite(v) ? v : n.level[i])), events = [];
   for (const pk of findPeaks(vt, n.thr, minDistance)) {
     let start = pk, end = pk;
-    while (start > 0 && vt[start - 1] > n.boundary) start--;
-    while (end < vt.length - 1 && vt[end + 1] > n.boundary) end++;
+    while (start > 0 && vt[start - 1] > n.boundary[start - 1]) start--;
+    while (end < vt.length - 1 && vt[end + 1] > n.boundary[end + 1]) end++;
     const duration = end - start + 1, last = events[events.length - 1];
     if (last && last.frame === start && last.end_frame === end) {  // same span: one event, at its highest peak
       if (vt[pk] > vt[last.peak_frame]) { last.peak_frame = pk; last.amplitude = dff[pk]; }
@@ -158,7 +178,7 @@ export function runRoi(movie, shape, tracks, params = {}) {
     const { trace, edge } = extractTrace(movie, shape, rows, p.roi_size);
     const dff = deltaFOverF(trace, p.baseline_method, p.baseline_percentile);
     return { track_id: id, baseline: computeBaseline(trace, p.baseline_method, p.baseline_percentile), trace, dff, edge,
-      events: detectPeaks(dff, p.threshold, p.min_duration, p.min_distance) };
+      events: detectPeaks(dff, p.threshold, p.min_duration, p.min_distance, p.noise_window) };
   });
   return { params: p, computed_by: 'javascript', tracks: out };
 }

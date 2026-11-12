@@ -9,14 +9,15 @@ from functools import lru_cache
 
 import numpy as np
 
-from piezo1_magik.analysis.calcium_roi import CalciumROIAnalyzer
+from piezo1_magik.analysis.calcium_roi import DEFAULT_NOISE_WINDOW, CalciumROIAnalyzer
 from piezo1_magik.data.demo_dual_channel import PIXEL_SIZE_NM, make_demo_dual_channel
 from piezo1_magik.tracking.linking import (build_candidate_graph, build_track_fragments, fragments_to_node_mapping,
                                           greedy_linking, merge_track_fragments)
 from piezo1_magik.tracking.track_stats import analyze_fragmentation, analyze_track_lengths, length_categories
 
 ROI_DEFAULTS = dict(roi_size=5, baseline_method='percentile', baseline_percentile=10.0, threshold=2.0,
-                    min_duration=2, min_distance=5)  # CalciumROIAnalyzer / detect_peaks defaults
+                    min_duration=2, min_distance=5, noise_window=DEFAULT_NOISE_WINDOW)
+# CalciumROIAnalyzer / detect_peaks defaults
 TRACK_DEFAULTS = dict(max_temporal_gap=2, max_spatial_distance=30.0, max_gap=10, max_distance=30.0)
 # graph: configs/magik_training.yaml; gap filling: scripts/08_fill_track_gaps.py defaults
 
@@ -72,7 +73,7 @@ def roi_on(movie, tracks, params=None):
         trace, edge = a.extract_trace_flags(movie, tr)
         dff = a.compute_delta_f_over_f(trace)
         events = a.detect_peaks(dff, threshold=float(p['threshold']), min_duration=int(p['min_duration']),
-                                min_distance=int(p['min_distance']))
+                                min_distance=int(p['min_distance']), noise_window=int(p['noise_window'] or 0))
         out.append({'track_id': int(tid), 'baseline': a.compute_baseline(trace), 'trace': trace, 'dff': dff,
                     'edge': edge.tolist(), 'events': events})
     return clean({'params': p, 'computed_by': 'python', 'tracks': out})

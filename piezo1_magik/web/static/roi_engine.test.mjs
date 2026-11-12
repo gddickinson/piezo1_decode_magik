@@ -1,7 +1,7 @@
 // Node test: roi_engine.js reproduces CalciumROIAnalyzer and scipy.signal.find_peaks
 // (tests/fixtures/engine_cases.json, written by scripts/make_engine_fixture.py). Run: node roi_engine.test.mjs
 import assert from 'node:assert/strict';
-import { findPeaks, roundHalfEven, runRoi } from './roi_engine.js';
+import { detectPeaks, findPeaks, noiseLevels, roundHalfEven, runRoi } from './roi_engine.js';
 import { close, decodeU16, fixture } from './test_util.mjs';
 
 const fx = fixture();
@@ -13,6 +13,16 @@ for (const c of fx.peaks) {
   assert.deepEqual(findPeaks(c.x, c.height, c.distance), c.peaks, `find_peaks ${JSON.stringify(c).slice(0, 80)}`);
   checks++;
 }
+
+for (const c of fx.noise) {
+  const dff = c.dff.map(v => (v === null ? NaN : v)), lv = noiseLevels(dff, 2.0, c.window), tag = `noise window ${c.window}`;
+  c.level.forEach((v, k) => { close(lv.level[k], v, `${tag} level[${k}]`); close(lv.sigma[k], c.sigma[k], `${tag} sigma[${k}]`); checks++; });
+  const ev = detectPeaks(dff, 2.0, 2, 3, c.window);
+  assert.deepEqual(ev.map(e => [e.frame, e.peak_frame, e.end_frame, e.duration]),
+    c.events.map(e => [e.frame, e.peak_frame, e.end_frame, e.duration]), `${tag} events`);
+  checks++;
+}
+assert.throws(() => noiseLevels([0, 1, 2], 2, -1), /noise_window/);
 
 const movie = decodeU16(fx.roi.movie_b64);
 for (const run of fx.roi.runs) {

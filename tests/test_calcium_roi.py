@@ -1,6 +1,7 @@
 """Tests for CalciumROIAnalyzer (piezo1_magik/analysis/calcium_roi.py)."""
 import numpy as np
 import pandas as pd
+import pytest
 
 from piezo1_magik.analysis.calcium_roi import CalciumROIAnalyzer
 
@@ -117,3 +118,68 @@ def test_one_event_per_supra_threshold_span():
     dff[109] += 0.04
     ev = CalciumROIAnalyzer(roi_size=5).detect_peaks(dff, threshold=3.0, min_distance=5)
     assert len(ev) == 1 and ev[0]['peak_frame'] == 102 and ev[0]['frame'] == 100 and ev[0]['end_frame'] == 111
+
+
+def _drifting_traces(n=20, T=300, starts=(40, 130, 220, 280)):
+    """F(t): 500 ADU, noise 10, a ramp (+120 ADU) plus a slow sinusoid (+-40 ADU), and 4 events of 60 ADU (6 noise
+    sigma) decaying with tau 3 frames. Yields (trace, starts)."""
+    t = np.arange(T)
+    for seed in range(n):
+        rng = np.random.default_rng(seed)
+        f = 500 + 0.4 * t + 40 * np.sin(2 * np.pi * t / 250) + rng.normal(0, 10, T)
+        for s in starts:
+            f[s:] += 60 * np.exp(-(t[s:] - s) / 3)
+        yield f, starts
+
+
+def _score(a, noise_window):
+    found = fp = n = 0
+    for f, starts in _drifting_traces():
+        peaks = [e['peak_frame'] for e in a.detect_peaks(a.compute_delta_f_over_f(f), noise_window=noise_window)]
+        found += sum(any(s <= p <= s + 12 for p in peaks) for s in starts)
+        fp += sum(not any(s <= p <= s + 12 for s in starts) for p in peaks)
+        n += len(starts)
+    return found, fp, n
+
+
+def test_noise_window_follows_a_drifting_baseline():
+    """Regression: the noise level/sigma came from the whole trace, so with baseline drift (which a single F0 leaves
+    in dF/F0) the threshold sat above the events on the low part of the trace. A rolling window follows the drift."""
+    from piezo1_magik.analysis.calcium_roi import DEFAULT_NOISE_WINDOW
+    a = CalciumROIAnalyzer()
+    whole, _, n = _score(a, None)
+    local, fp, _ = _score(a, 61)
+    assert whole < 0.5 * n  # whole-trace statistics: most events missed (30 of 80)
+    assert local >= 0.75 * n and local >= 1.8 * whole and fp <= 12  # rolling 61 frames: 62 of 80, 8 false
+    assert DEFAULT_NOISE_WINDOW == 61
+    f, _ = next(_drifting_traces(1))
+    d = a.compute_delta_f_over_f(f)
+    assert a.detect_peaks(d) == a.detect_peaks(d, noise_window=61)
+
+
+def test_noise_window_zero_or_none_is_the_whole_trace():
+    rng = np.random.default_rng(2)
+    d = rng.normal(0, 0.02, 120)
+    d[50:55] += 0.2
+    a = CalciumROIAnalyzer()
+    lv, sg = a.noise_levels(d, None)
+    assert np.all(lv == np.median(d)) and np.allclose(sg, 1.4826 * np.median(np.abs(d - np.median(d))))
+    assert a.detect_peaks(d, noise_window=0) == a.detect_peaks(d, noise_window=None)
+    # a window covering the whole trace from every frame (>= 2T - 1) gives the whole-trace result too
+    assert a.detect_peaks(d, noise_window=239) == a.detect_peaks(d, noise_window=None)
+    lv, sg = a.noise_levels(d, 21)  # rolling: frame 52's window holds the event, frame 100's does not
+    assert lv[52] > lv[100]
+    with pytest.raises(ValueError, match="noise_window"):
+        a.noise_levels(d, -5)
+    with pytest.raises(ValueError, match="noise_window"):
+        a.noise_levels(d, 2.5)
+
+
+def test_noise_window_with_gaps_and_short_windows():
+    """NaN frames count towards the window but give no value; < 3 values in a window -> whole-trace statistics."""
+    d = np.array([0.0, 0.1, np.nan, np.nan, np.nan, 0.05, -0.02, 0.03, 0.01, 0.5, 0.0, 0.02])
+    a = CalciumROIAnalyzer()
+    lv, sg = a.noise_levels(d, 3)
+    g_lv, g_sg = a.noise_levels(d, None)
+    assert lv[3] == g_lv[3] and sg[3] == g_sg[3]  # window frames 2-4: no values
+    assert lv[7] == np.median([-0.02, 0.03, 0.01]) and np.isclose(sg[7], 1.4826 * 0.02)

@@ -17,6 +17,7 @@ from scipy.signal import find_peaks
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from piezo1_magik.analysis.calcium_roi import CalciumROIAnalyzer  # noqa: E402
 from piezo1_magik.tracking.linking import greedy_linking  # noqa: E402
 from piezo1_magik.utils.psf_models import Airy2DPSF, Gaussian2DPSF  # noqa: E402
 from piezo1_magik.web.demo import clean, demo, roi_on, run_tracks  # noqa: E402
@@ -27,6 +28,8 @@ ROI_PARAMS = [
     {},
     dict(roi_size=1), dict(roi_size=3, threshold=1.0, min_duration=1, min_distance=1),
     dict(roi_size=7, baseline_method='rolling'), dict(baseline_method='mean', threshold=1.5),
+    dict(noise_window=0), dict(noise_window=1), dict(noise_window=4, threshold=1.0, min_duration=1, min_distance=1),
+    dict(roi_size=3, noise_window=11, threshold=1.5), dict(noise_window=21, baseline_method='rolling'),
     dict(baseline_percentile=50.0, min_duration=3, min_distance=8), dict(roi_size=9, baseline_method='rolling', threshold=0.5),
 ]
 TRACK_PARAMS = [{}, dict(max_temporal_gap=1, max_spatial_distance=3.0, max_gap=3, max_distance=2.0),
@@ -71,6 +74,29 @@ def peak_cases():
     return cases
 
 
+def noise_cases():
+    """noise_levels/detect_peaks with a rolling window: a drifting dF/F0 trace with events and NaN gaps, a short trace,
+    a quantised trace (local MAD 0 -> whole-trace values)."""
+    rng = np.random.default_rng(9)
+    t = np.arange(150)
+    drift = 0.002 * t + 0.08 * np.sin(2 * np.pi * t / 90) + rng.normal(0, 0.02, 150)
+    for s in (20, 70, 120):
+        drift[s:] += 0.15 * np.exp(-(t[s:] - s) / 3)
+    drift[[5, 6, 7, 60, 100, 101]] = np.nan
+    short = rng.normal(0, 0.05, 9)
+    short[4] = 0.4
+    quant = np.round(rng.normal(0, 0.6, 60)) / 10
+    quant[30:33] += 0.5
+    a = CalciumROIAnalyzer()
+    cases = []
+    for dff in (drift, short, quant):
+        for w in (0, 1, 3, 10, 31, 61):
+            level, sigma = a.noise_levels(dff, w)
+            cases.append({'dff': dff.tolist(), 'window': w, 'level': level.tolist(), 'sigma': sigma.tolist(),
+                          'events': a.detect_peaks(dff, threshold=2.0, min_duration=2, min_distance=3, noise_window=w)})
+    return cases
+
+
 def link_cases():
     rng = np.random.default_rng(5)
     cases = []
@@ -99,6 +125,7 @@ def build() -> dict:
                 'tracks': {c: tracks[c].tolist() for c in tracks.columns},
                 'runs': [roi_on(movie, tracks, p) for p in ROI_PARAMS]},
         'peaks': peak_cases(),
+        'noise': noise_cases(),
         'tracks': {'input': {c: sub[c].tolist() for c in ('track_id', 'frame', 'x', 'y')},
                    'runs': [run_tracks(p, tracks=sub) for p in TRACK_PARAMS]},
         'links': link_cases(),

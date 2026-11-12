@@ -42,7 +42,8 @@ calcium signal analysis for PIEZO1 puncta in dual-channel microscopy data.
 
 ### `analysis/`
 - **`calcium_roi.py`** -- ROI-based calcium signal extraction and analysis
-  - `CalciumROIAnalyzer` -- extracts traces, computes dF/F0, detects events
+  - `CalciumROIAnalyzer` -- extracts traces, computes dF/F0, detects events (`noise_levels()`: whole-trace or
+    rolling median/MAD, `DEFAULT_NOISE_WINDOW` = 61 frames)
   - `analyze_all_tracks()` -- batch analysis for all tracks
 
 ### `utils/`
@@ -72,6 +73,7 @@ calcium signal analysis for PIEZO1 puncta in dual-channel microscopy data.
 - `07_analyze_tracks.py` -- track quality (lengths, spans, gaps, fragmentation)
 - `08_fill_track_gaps.py` -- gap filling in tracks
 - `09_run_complete_pipeline.py` -- end-to-end pipeline
+- `simulate_noise_window.py` -- seeded simulation behind the default event-detection noise window
 - `11-14_download_*.py` -- public dataset downloaders
 
 ### `scripts/utils/`

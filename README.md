@@ -283,6 +283,13 @@ Data and results produced before these fixes are not directly comparable with ne
   it (`--config`, default this file) and command-line options override single values. Its `detection.min_photons`
   (100) now drops faint detections, and the calcium baseline/event settings now reach the analysis (they were fixed
   at the defaults). Keys no script could use (`save_visualizations`, `viz_*`, `batch_size`, `num_workers`) were removed.
+- **Rolling noise window for calcium events.** The median and robust σ behind the event threshold came from the
+  whole trace. F₀ is one number per trace, so a slow baseline drift stayed in ΔF/F₀ and moved the threshold away from
+  the local baseline (events on the low part of a drifting trace were missed). `detect_peaks` now takes
+  `noise_window` (frames): rolling median and 1.4826 × MAD over that many frames centred on each frame. The default is
+  61 (`calcium.noise_window`, `--noise_window`; 0 or null = whole trace, the old behaviour), chosen with the seeded
+  simulation `scripts/simulate_noise_window.py` (300-frame traces, events 3-10 noise σ): event F1 with drift 0.87 vs
+  0.48 for the whole trace, without drift 0.95 vs 0.96. Event counts on drifting data change.
 - **`max_frame_gap` in `04_run_pipeline.py` is now 2** (was 5), the gap MAGIK is trained with
   (`configs/magik_training.yaml` `max_temporal_gap`). The frame gap is one of MAGIK's edge features, so edges of 3-5
   frames had feature values outside its training range. Detections 3-5 frames apart are no longer linked directly by

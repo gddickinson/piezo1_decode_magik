@@ -136,34 +136,40 @@ def track_with_magik(detections_per_frame, magik_model, device,
         tracks_df: DataFrame with tracks
     """
     print("\nBuilding tracking graph...")
-    
-    # Build graph
-    node_features, edge_index, edge_features, node_map = build_tracking_graph(
-        detections_per_frame,
-        max_frame_gap=max_frame_gap,
-        max_distance=max_distance
+
+    # Flatten the per-frame lists into graph nodes; node_map[i] = (frame, index in that frame)
+    flat, node_map = [], []
+    for frame_idx, dets in enumerate(detections_per_frame):
+        for det_idx, det in enumerate(dets):
+            flat.append({'frame': frame_idx, 'x': float(det['x']), 'y': float(det['y']),
+                         'prob': float(det.get('prob', 1.0)), 'photons': float(det.get('photons', 1000.0))})
+            node_map.append((frame_idx, det_idx))
+
+    node_features, edge_index, edge_features = build_tracking_graph(
+        flat,
+        max_temporal_gap=max_frame_gap,
+        max_spatial_distance=max_distance
     )
-    
+
     print(f"  Nodes: {node_features.shape[0]}")
     print(f"  Candidate edges: {edge_index.shape[1]}")
-    
+
     if edge_index.shape[1] == 0:
         print("⚠️  No candidate edges - returning empty tracks")
         return pd.DataFrame(columns=['track_id', 'frame', 'x', 'y', 'photons'])
-    
+
     # Move to device
     node_features = node_features.to(device)
     edge_index = edge_index.to(device)
     edge_features = edge_features.to(device)
-    
-    # Predict links
+
+    # Predict links: every candidate edge whose MAGIK probability exceeds link_threshold
     print("Predicting links with MAGIK...")
     magik_model.eval()
     with torch.no_grad():
-        links, link_probs = magik_model.predict_links(
-            node_features, edge_index, edge_features, threshold=link_threshold
-        )
-    
+        link_probs = torch.sigmoid(magik_model(node_features, edge_index, edge_features))
+    links = edge_index[:, link_probs > link_threshold].t().cpu().numpy()
+
     print(f"✅ Predicted {len(links)} links")
     
     # Convert links to tracks using connected components

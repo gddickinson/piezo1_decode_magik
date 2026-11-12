@@ -37,3 +37,14 @@ def test_gap_filling_bridges_a_blink_and_stats():
     assert analyze_fragmentation(n2t, [0] * 6) == [2]
     assert analyze_fragmentation(m, [0] * 6) == [1]
     assert length_categories([1, 3, 4, 10, 11]) == {'short': 2, 'medium': 2, 'long': 1}
+
+
+def test_gap_filling_is_not_capped_at_100_merges():
+    """Regression: the merge loop stopped after 100 iterations, leaving fragments unmerged in fields of view with
+    more than 101 fragments although every iteration removes one fragment (so the loop always terminates)."""
+    n = 150
+    nf = np.array([[2 * k, 0.5 * k, 3.0, 1, 1000] for k in range(n)])  # one detection every 2 frames
+    frags = build_track_fragments({k: k for k in range(n)}, nf)
+    merged, iterations = merge_track_fragments(frags, max_gap=3, max_distance=2.0)
+    assert len(merged) == 1 and merged[0]['length'] == n
+    assert iterations == n  # n - 1 merges plus the final pass that finds no candidate

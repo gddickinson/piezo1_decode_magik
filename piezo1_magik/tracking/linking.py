@@ -144,8 +144,11 @@ def can_merge_fragments(frag1, frag2, max_gap=10, max_distance=30):
     return True, distance + gap * 2
 
 
-def merge_track_fragments(fragments, max_gap=10, max_distance=30, max_iterations=100):
+def merge_track_fragments(fragments, max_gap=10, max_distance=30, max_iterations=None):
     """Gap filling: repeatedly merge the best-scoring candidate pair (lowest distance + 2 * gap) until none is left.
+
+    Each merge removes one fragment, so the loop ends after at most len(fragments) passes; max_iterations
+    (default: no extra cap) can stop it earlier. (The scripts used to stop at 100 merges.)
 
     Returns:
         (final_fragments, n_iterations)
@@ -153,6 +156,8 @@ def merge_track_fragments(fragments, max_gap=10, max_distance=30, max_iterations
     active = {i: frag.copy() for i, frag in enumerate(fragments)}
     merged_into = {}
     iteration = 0
+    if max_iterations is None:
+        max_iterations = len(fragments) + 1
     while iteration < max_iterations:
         iteration += 1
         candidates = []

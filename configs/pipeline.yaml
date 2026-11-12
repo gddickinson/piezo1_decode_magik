@@ -14,7 +14,12 @@ detection:
 
 # Tracking parameters
 tracking:
-  max_frame_gap: 5  # Maximum frames to link across (MAGIK is trained with max_temporal_gap 2)
+  # Keep max_frame_gap equal to the gap MAGIK was trained with (configs/magik_training.yaml
+  # data.max_temporal_gap = 2): the temporal gap is one of MAGIK's edge features, so edges spanning more frames than
+  # in training get feature values the network never saw, and its link probabilities for them are not calibrated.
+  # Gap filling (08_fill_track_gaps.py, 09 --use_gap_filling) joins fragments across longer gaps without MAGIK.
+  # Change both values together if MAGIK is retrained with another gap.
+  max_frame_gap: 2  # Maximum frames to link across (= MAGIK training gap, max_temporal_gap 2)
   max_distance: 10.0  # Maximum spatial distance (pixels)
   link_threshold: 0.5  # MAGIK probability threshold for linking
 

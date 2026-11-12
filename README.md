@@ -283,6 +283,11 @@ Data and results produced before these fixes are not directly comparable with ne
   it (`--config`, default this file) and command-line options override single values. Its `detection.min_photons`
   (100) now drops faint detections, and the calcium baseline/event settings now reach the analysis (they were fixed
   at the defaults). Keys no script could use (`save_visualizations`, `viz_*`, `batch_size`, `num_workers`) were removed.
+- **`max_frame_gap` in `04_run_pipeline.py` is now 2** (was 5), the gap MAGIK is trained with
+  (`configs/magik_training.yaml` `max_temporal_gap`). The frame gap is one of MAGIK's edge features, so edges of 3-5
+  frames had feature values outside its training range. Detections 3-5 frames apart are no longer linked directly by
+  04; gap filling (`08`, `09 --use_gap_filling`) joins such fragments. It stays configurable
+  (`tracking.max_frame_gap`, `--max_frame_gap`); change it together with the training gap.
 
 ---
 

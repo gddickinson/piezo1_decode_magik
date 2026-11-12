@@ -544,7 +544,8 @@ done
 **Solutions**:
 1. Increase `--max_distance` (try 15 pixels)
 2. Lower `--link_threshold` (try 0.3)
-3. Increase `max_frame_gap` in graph building
+3. Use gap filling (`08_fill_track_gaps.py`, `09 --use_gap_filling`) for longer gaps; raise `max_frame_gap` only
+   together with MAGIK's training gap (`max_temporal_gap`) and retrain, since the gap is one of its edge features
 4. Retrain MAGIK with more diverse motion patterns
 
 ### **Issue: No calcium events detected**

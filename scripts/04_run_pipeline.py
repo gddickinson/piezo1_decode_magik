@@ -124,7 +124,7 @@ def detect_puncta_decode(piezo1_movie, decode_model, device, detection_threshold
 
 
 def track_with_magik(detections_per_frame, magik_model, device,
-                     max_frame_gap=5, max_distance=10.0, link_threshold=0.5):
+                     max_frame_gap=2, max_distance=10.0, link_threshold=0.5):
     """
     Link detections into tracks using MAGIK GNN.
 
@@ -138,7 +138,8 @@ def track_with_magik(detections_per_frame, magik_model, device,
         detections_per_frame: Detections from DECODE
         magik_model: Trained MAGIK model
         device: torch device
-        max_frame_gap: Max frames to link across
+        max_frame_gap: Max frames to link across; keep equal to the MAGIK training gap (max_temporal_gap,
+            2 in configs/magik_training.yaml), since the gap is an edge feature the network was trained on
         max_distance: Max spatial distance (pixels)
         link_threshold: Probability threshold for linking
 
@@ -294,7 +295,9 @@ def build_parser():
     parser.add_argument('--magik', type=str, help='MAGIK checkpoint (models.magik)')
     parser.add_argument('--detection_threshold', type=float, help='DECODE detection threshold (detection.threshold)')
     parser.add_argument('--min_photons', type=float, help='Minimum photons per detection (detection.min_photons)')
-    parser.add_argument('--max_frame_gap', type=int, help='Maximum frames to link across (tracking.max_frame_gap)')
+    parser.add_argument('--max_frame_gap', type=int,
+                        help='Maximum frames to link across (tracking.max_frame_gap; keep equal to the MAGIK '
+                             'training gap, 2)')
     parser.add_argument('--max_distance', type=float,
                         help='Maximum linking distance (pixels) (tracking.max_distance)')
     parser.add_argument('--link_threshold', type=float, help='MAGIK linking threshold (tracking.link_threshold)')

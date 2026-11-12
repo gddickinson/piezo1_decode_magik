@@ -3,10 +3,11 @@
 
 export const PSF_DEFAULTS = { wavelength_nm: 646, NA: 1.49, pixel_size_nm: 130 };
 
-// Gaussian2DPSF: the code takes 0.61 * lambda / NA as the FWHM and sigma = FWHM / 2.355 (in pixels)
-export function gaussianSigmaPx({ wavelength_nm, NA, pixel_size_nm }) {
-  const fwhmNm = 0.61 * wavelength_nm / NA;
-  return (fwhmNm / pixel_size_nm) / 2.355;
+// Gaussian2DPSF: FWHM of the Airy disk, 0.5145 * lambda / NA, and sigma = FWHM / (2 sqrt(2 ln 2)) (in pixels)
+export const AIRY_FWHM_FACTOR = 0.5144969849810765;
+export const gaussianFwhmNm = ({ wavelength_nm, NA }) => AIRY_FWHM_FACTOR * wavelength_nm / NA;
+export function gaussianSigmaPx(o) {
+  return (gaussianFwhmNm(o) / o.pixel_size_nm) / (2 * Math.sqrt(2 * Math.log(2)));
 }
 
 // Airy2DPSF: radius of the first zero, 0.61 * lambda / NA

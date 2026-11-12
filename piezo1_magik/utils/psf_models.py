@@ -7,9 +7,12 @@ Provides Gaussian and Airy PSF models for simulating realistic puncta.
 import numpy as np
 from scipy.special import j1
 
+AIRY_FWHM_FACTOR = 0.5144969849810765  # Airy intensity FWHM in units of lambda / NA (= 1.6163 / pi)
+FWHM_PER_SIGMA = 2.0 * np.sqrt(2.0 * np.log(2.0))  # 2.3548
+
 
 class Gaussian2DPSF:
-    """2D Gaussian PSF model (fast approximation)."""
+    """2D Gaussian PSF model (fast approximation) with the same FWHM as the Airy disk."""
     
     def __init__(self, wavelength_nm=646, NA=1.49, pixel_size_nm=130):
         """
@@ -18,11 +21,13 @@ class Gaussian2DPSF:
             NA: Numerical aperture
             pixel_size_nm: Pixel size (nm)
         """
-        # Abbe diffraction limit
-        fwhm_nm = 0.61 * wavelength_nm / NA
-        
-        # Convert to sigma (pixels)
-        self.sigma_px = (fwhm_nm / pixel_size_nm) / 2.355
+        # FWHM of the Airy disk: (2 J1(v)/v)^2 is half its peak at v = 1.6163, i.e. FWHM = 0.5145 lambda/NA
+        # (Born & Wolf, Principles of Optics, sec. 8.5.2). 0.61 lambda/NA, used here before 2026-11-12, is the
+        # first-dark-ring (Rayleigh) radius and made the Gaussian ~19% too wide.
+        self.fwhm_nm = AIRY_FWHM_FACTOR * wavelength_nm / NA
+
+        # Convert to sigma (pixels): FWHM = 2 sqrt(2 ln 2) sigma
+        self.sigma_px = (self.fwhm_nm / pixel_size_nm) / FWHM_PER_SIGMA
         self.pixel_size_nm = pixel_size_nm
     
     def generate(self, x, y, photons=1000, image_size=(64, 64)):

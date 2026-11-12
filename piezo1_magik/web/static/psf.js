@@ -1,7 +1,7 @@
 // PSF models of the synthetic-data generator (psf_models.py), computed in the browser by psf_engine.js.
 import { app, route, slider } from './core.js';
 import { lineChart } from './charts.js';
-import { airyPsf, airyRadiusNm, gaussianPsf, gaussianSigmaPx, PSF_DEFAULTS } from './psf_engine.js';
+import { airyPsf, airyRadiusNm, gaussianFwhmNm, gaussianPsf, gaussianSigmaPx, PSF_DEFAULTS } from './psf_engine.js';
 
 const N = 15, K = 14;
 
@@ -30,9 +30,10 @@ route('psf', () => {
       <div class="legend"><span><span class="sw" style="background:#ff5a7a"></span>Gaussian</span><span><span class="sw" style="background:#5ab4ff"></span>Airy</span></div></div>
     <dl class="kv panel" id="nums"></dl>
   </div></div>
-  <div class="callout">The code computes the Gaussian width from <code>fwhm_nm = 0.61 · λ / NA</code> and σ = FWHM / 2.355. 0.61 λ/NA is the
-    radius of the Airy disk's first dark ring (the Rayleigh distance), which <code>Airy2DPSF</code> also uses; the FWHM of an Airy disk is about
-    0.51 λ/NA. So the synthetic Gaussian puncta are about 20% wider than an Airy disk with the same λ and NA. This page reports what the code does.</div>`;
+  <div class="callout">The Gaussian has the full width at half maximum of the Airy disk: the Airy intensity (2J₁(v)/v)² falls to half
+    its peak at v = 1.6163, so FWHM = 0.5145 λ/NA (Born &amp; Wolf, <i>Principles of Optics</i>, §8.5.2), and σ = FWHM / 2.3548.
+    0.61 λ/NA is the radius of the first dark ring (the Rayleigh distance). Until 2026-11-12 the code used 0.61 λ/NA as the FWHM,
+    which made the simulated puncta about 19% too wide; synthetic training data generated before then differs.</div>`;
   const ctl = document.getElementById('ctl');
   const update = () => {
     const g = gaussianPsf(o, o.x, 7, o.photons, N, N), a = airyPsf(o, o.x, 7, o.photons, N, N);
@@ -45,7 +46,7 @@ route('psf', () => {
       { xlabel: 'x (px)', ylabel: 'photons per pixel', label: 'PSF profiles', h: 200 });
     const s = gaussianSigmaPx(o);
     document.getElementById('nums').innerHTML = `
-      <dt>"FWHM" used (0.61 λ/NA)</dt><dd>${(0.61 * o.wavelength_nm / o.NA).toFixed(1)} nm</dd>
+      <dt>FWHM (0.5145 λ/NA)</dt><dd>${gaussianFwhmNm(o).toFixed(1)} nm = ${(gaussianFwhmNm(o) / o.pixel_size_nm).toFixed(3)} px</dd>
       <dt>Gaussian σ</dt><dd>${s.toFixed(3)} px = ${(s * o.pixel_size_nm).toFixed(1)} nm</dd>
       <dt>Airy first-zero radius</dt><dd>${(airyRadiusNm(o) / o.pixel_size_nm).toFixed(3)} px = ${airyRadiusNm(o).toFixed(1)} nm</dd>
       <dt>Peak pixel</dt><dd>Gaussian ${Math.max(...g).toFixed(1)}, Airy ${Math.max(...a).toFixed(1)} photons</dd>`;

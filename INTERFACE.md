@@ -29,7 +29,7 @@ calcium signal analysis for PIEZO1 puncta in dual-channel microscopy data.
   and the JS-vs-Python tests (calcium events placed on tracked puncta)
 
 ### `tracking/` (NumPy only, no PyTorch)
-- **`linking.py`** -- shared by scripts 03c, 07, 08, 09 and the web interface
+- **`linking.py`** -- the one linking implementation, used by scripts 03c, 04, 07, 08, 09 and the web interface
   - `build_candidate_graph()` -- MAGIK input graph (nodes [frame,x,y,prob,photons], edges [dx,dy,dist,gap])
   - `greedy_linking()` -- one-to-one linking of edge probabilities into tracks
   - `build_track_fragments()`, `merge_track_fragments()` (gap filling), `fragments_to_node_mapping()`
@@ -91,7 +91,7 @@ calcium signal analysis for PIEZO1 puncta in dual-channel microscopy data.
 - `debug_decode.py` -- interactive model debugging (moved from scripts/)
 
 ## Config: `configs/`
-YAML configuration files for training runs.
+YAML configuration: decode_training.yaml and magik_training.yaml (training, via --config), pipeline.yaml (04_run_pipeline.py).
 
 ## Archived: `_archive/`
 - `magik_gnn_old.py` -- previous version of MAGIK GNN

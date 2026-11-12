@@ -23,3 +23,18 @@
   lowers F; event threshold is k x std(dF/F0) from zero, not from the baseline; 04 links by connected components
   while 03c/07/08/09 use greedy one-to-one linking; `configs/pipeline.yaml` is read by no script.
 - Mac mini not used.
+
+## 2026-11-12 (later) -- fixes requested after review (George's "fix any other problems")
+- Gaussian PSF: FWHM = 0.5145 lambda/NA (Airy FWHM, Born & Wolf sec. 8.5.2) instead of 0.61 lambda/NA (first-ring
+  radius). Default sigma 0.864 -> 0.729 px. **Synthetic training data changes**; models trained on old data saw
+  puncta ~19% too wide. Test: tests/test_psf_models.py.
+- ROI at image edges: out-of-image pixels excluded from the mean (not zero-padded), edge frames flagged
+  (`edge_roi` column). Removes false events on tracks reaching the border.
+- Event threshold: median + k x 1.4826 MAD of dF/F0 (was k x std from zero). Web demo: 4 hits / 2 false
+  (was 4 / 16); one remaining "false" event is a neighbour's event leaking into the ROI. Duplicate events within one
+  span merged.
+- 04_run_pipeline.py: shared greedy one-to-one linking (was connected components); reads configs/pipeline.yaml
+  with CLI overrides (min_photons, calcium options and save flags now take effect; unused keys removed).
+- JS ports (roi_engine.js, psf_engine.js) and the fixture updated with each fix; all node tests pass.
+- Still open: the event threshold uses whole-trace median/MAD (no sliding window; drift should go through
+  baseline_method='rolling'); 04's max_frame_gap 5 vs MAGIK training gap 2 is documented, not changed.

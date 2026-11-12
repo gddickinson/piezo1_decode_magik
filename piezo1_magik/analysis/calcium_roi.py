@@ -78,6 +78,10 @@ class CalciumROIAnalyzer:
         x_min = max(0, x_int - self.half_size)
         x_max = min(W, x_int + self.half_size + 1)
         
+        # Entirely outside the image: a negative slice end would wrap around in NumPy
+        if y_max <= y_min or x_max <= x_min:
+            return np.zeros((self.roi_size, self.roi_size))
+
         roi = image[y_min:y_max, x_min:x_max]
         
         # Pad if near edge

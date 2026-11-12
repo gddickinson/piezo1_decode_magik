@@ -53,40 +53,30 @@ Input: Dual-channel TIFF stack (PIEZO1 + Calcium)
 
 ```
 piezo1_decode_magik/
-├── README.md                          # This file
-├── IMPLEMENTATION_GUIDE.md            # Step-by-step guide
-├── requirements.txt                   # Dependencies
-├── setup.py                           # Installation
-│
-├── piezo1_magik/                      # Main package
+├── README.md, INTERFACE.md (navigation map), ROADMAP.md, SESSION_LOG.md
+├── requirements.txt, setup.py, pyproject.toml
+├── docs/                              # guides (implementation, training, public datasets)
+├── piezo1_magik/                      # main package
 │   ├── models/
-│   │   ├── decode_net.py             # DECODE localization
-│   │   └── magik_gnn.py              # MAGIK tracking GNN
+│   │   ├── decode_net.py             # DECODE localization network
+│   │   └── magik_gnn.py              # MAGIK tracking GNN + build_tracking_graph
 │   ├── data/
-│   │   ├── synthetic_generator.py    # Generate with tracks
-│   │   ├── dataset.py                # PyTorch datasets
-│   │   └── graph_builder.py          # Build graphs for MAGIK
-│   ├── tracking/
-│   │   ├── graph_tracker.py          # GNN-based tracking
-│   │   └── track_analysis.py         # Trajectory analysis
+│   │   ├── synthetic_generator.py    # synthetic movies with ground-truth tracks
+│   │   ├── decode_dataset.py         # PyTorch dataset for DECODE
+│   │   ├── magik_dataset.py          # PyTorch dataset for MAGIK (graphs)
+│   │   └── demo_dual_channel.py      # small PIEZO1 + calcium demo movie (web interface)
+│   ├── tracking/                     # NumPy only
+│   │   ├── linking.py                # candidate graph, greedy linking, gap filling
+│   │   └── track_stats.py            # track lengths, gaps, fragmentation
 │   ├── analysis/
-│   │   ├── calcium_roi.py            # ROI extraction
-│   │   └── signal_detection.py       # Peak detection
-│   └── utils/
-│       └── psf_models.py             # PSF simulation
-│
-├── scripts/                           # Executable scripts
-│   ├── 01_generate_synthetic_data.py
-│   ├── 02_train_decode.py
-│   ├── 03_train_magik.py
-│   ├── 04_run_pipeline.py            # Full pipeline
-│   ├── 05_analyze_calcium.py
-│   └── 06_visualize_results.py
-│
-└── configs/                           # Configuration files
-    ├── decode_training.yaml
-    ├── magik_training.yaml
-    └── pipeline.yaml
+│   │   └── calcium_roi.py            # ROI extraction, dF/F0, event detection
+│   ├── utils/
+│   │   └── psf_models.py             # Gaussian and Airy PSFs, camera noise
+│   └── web/                          # web interface (see "Web interface" below)
+├── scripts/                           # 01 data, 02 DECODE, 03 MAGIK, 04/09 pipelines,
+│                                      # 06 figures, 07/08 track analysis, 11-14 downloads, 16 test
+├── configs/                           # decode_training.yaml, magik_training.yaml, pipeline.yaml
+└── tests/
 ```
 
 ---
@@ -107,7 +97,9 @@ Based on graph neural networks:
 - Nodes: Detected puncta (one per detection)
 - Edges: Potential links between frames
 - GNN learns edge probabilities
-- Handles blinking, splitting, merging, crowding
+- Bridges blinking: candidate edges span up to `max_temporal_gap` frames, and optional gap filling
+  (`08_fill_track_gaps.py`, `09 --use_gap_filling`) joins fragments across longer gaps
+- Linking is one-to-one (greedy, highest probability first), so tracks do not split or merge
 
 **Key features:**
 - Temporal context (looks ahead/behind)
@@ -136,7 +128,7 @@ For each tracked punctum:
 ## Installation
 
 ```bash
-tar -xzf piezo1_decode_magik.tar.gz
+git clone https://github.com/gddickinson/piezo1_decode_magik.git
 cd piezo1_decode_magik
 
 conda create -n piezo1_magik python=3.11
@@ -163,7 +155,7 @@ pip install torch-geometric torch-scatter torch-sparse
 python scripts/01_generate_synthetic_data.py \
     --output data/synthetic \
     --num_samples 5000 \
-    --with_tracks  # Generate full trajectories
+    --with_blinking  # every movie comes with ground-truth tracks
 ```
 
 ### **2. Train DECODE Localization**
@@ -181,7 +173,7 @@ python scripts/02_train_decode.py \
 python scripts/03_train_magik.py \
     --config configs/magik_training.yaml \
     --data data/synthetic \
-    --decode_model checkpoints/decode/best_model.pth \
+    --decode checkpoints/decode/best_model.pth \
     --output checkpoints/magik
 ```
 
@@ -191,7 +183,7 @@ python scripts/03_train_magik.py \
 python scripts/04_run_pipeline.py \
     --decode checkpoints/decode/best_model.pth \
     --magik checkpoints/magik/best_model.pth \
-    --input /path/to/dual/channel/data \
+    --input /path/to/dual_channel_movie.tif \
     --output results/
 ```
 
@@ -205,6 +197,9 @@ This will:
 ---
 
 ## Expected Performance
+
+These are design targets (as in the comments of `configs/*.yaml`); the repository contains no trained models
+or benchmark results that reproduce them.
 
 ### **Localization (DECODE)**
 - Precision: 20-40 nm
@@ -225,25 +220,16 @@ This will:
 
 ## Outputs
 
-Per movie, the pipeline generates:
+Per movie, `scripts/04_run_pipeline.py` writes to `--output`:
 
-**Localization:**
-- `detections.csv` - All detected puncta (frame, x, y, intensity, uncertainty)
+- `tracks.csv` - linked detections (track_id, frame, x, y, photons, sigma_x, sigma_y; positions in pixels)
+- `track_statistics.csv` - per track: length, start_frame, end_frame, num_events
+- `calcium_traces.csv` - per track and frame: fluorescence (ADU), dff, baseline
+- `calcium_events.csv` - track_id, frame, peak_frame, amplitude (dF/F0), duration (frames)
+- `summary.json` - frame, detection, track and event counts
 
-**Tracking:**
-- `tracks.csv` - Linked trajectories (track_id, frame, x, y)
-- `track_stats.csv` - Per-track statistics (lifetime, displacement, mobility)
-
-**Calcium:**
-- `calcium_traces.csv` - Fluorescence traces per track
-- `calcium_events.csv` - Detected events (track_id, frame, amplitude, duration)
-- `correlation.csv` - Puncta-calcium correlation metrics
-
-**Visualizations:**
-- `tracks_overlay.mp4` - Tracks overlaid on movie
-- `calcium_traces.png` - Example fluorescence traces
-- `correlation_heatmap.png` - Spatial correlation
-
+`scripts/09_run_complete_pipeline.py` (DECODE + MAGIK, optional gap filling) writes `tracks.csv` and
+`track_summary.csv` plus `tracking_overlay.png` and `track_statistics.png`.
 
 ## Biological Applications
 
@@ -265,6 +251,40 @@ Per movie, the pipeline generates:
 - Does puncta movement trigger calcium?
 - Do calcium events change puncta mobility?
 - Spatial relationship between channels and events
+
+---
+
+## Web interface
+
+A web interface documents the pipeline and runs its lightweight stages on a synthetic demo movie.
+Static site (GitHub Pages): https://gddickinson.github.io/piezo1_decode_magik/
+
+| Page | What it shows |
+|---|---|
+| Pipeline | the three stages, inputs/outputs, networks, linking rules, with source files |
+| Parameters | every value in `configs/*.yaml` and every script option, with units (px, frames, nm, photons) and px in um at 130 nm/px |
+| ROI calcium analysis | F(t), dF/F0 and events at every tracked punctum of the demo; ROI size, baseline and thresholds adjustable |
+| Track linking and gap filling | candidate graph, greedy linking and gap filling on the demo detections, scored against ground truth |
+| PSF models | the Gaussian and Airy PSFs of the synthetic-data generator |
+
+The demo movie is synthetic (`piezo1_magik/data/demo_dual_channel.py`: the repo's generator plus a calcium channel
+with events placed on tracked puncta) and is labelled as such. DECODE and MAGIK need PyTorch and trained checkpoints,
+so they run only locally through the scripts; on the static site the ROI analysis, linking/gap filling and PSFs run in
+the browser as JS ports (`piezo1_magik/web/static/*_engine.js`) that node tests check against the Python output.
+
+### Run the web app
+
+```bash
+pip install -r requirements-web.txt
+python run_web.py          # http://127.0.0.1:8209 (local only); analyses run in Python
+python -m pytest -q tests  # includes the web and JS-vs-Python tests (node 22 for the latter)
+python scripts/build_static.py --out site   # the static site
+```
+
+![Home](docs/img/home.png)
+![ROI calcium analysis](docs/img/roi.png)
+![Track linking and gap filling](docs/img/tracks.png)
+![PSF models](docs/img/psf.png)
 
 ---
 
@@ -294,7 +314,7 @@ george.dickinson@gmail.com
 
 ---
 
-See `IMPLEMENTATION_GUIDE.md` for detailed instructions!
+See `docs/IMPLEMENTATION_GUIDE.md` for detailed instructions!
 
 
 ---

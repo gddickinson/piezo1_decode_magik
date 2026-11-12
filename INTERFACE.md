@@ -24,6 +24,17 @@ calcium signal analysis for PIEZO1 puncta in dual-channel microscopy data.
   - `MAGIKDataset` -- runs DECODE on movies, builds graphs with GT labels
   - `collate_graphs()` -- batches multiple graphs via disjoint union
 - **`synthetic_generator.py`** -- generates synthetic microscopy data
+  - `TrackGenerator`, `generate_synthetic_movie()` -- movie + ground-truth tracks (Gaussian PSF, noise, blinking)
+- **`demo_dual_channel.py`** -- `make_demo_dual_channel()`: small synthetic PIEZO1 + calcium movie for the web demo
+  and the JS-vs-Python tests (calcium events placed on tracked puncta)
+
+### `tracking/` (NumPy only, no PyTorch)
+- **`linking.py`** -- shared by scripts 03c, 07, 08, 09 and the web interface
+  - `build_candidate_graph()` -- MAGIK input graph (nodes [frame,x,y,prob,photons], edges [dx,dy,dist,gap])
+  - `greedy_linking()` -- one-to-one linking of edge probabilities into tracks
+  - `build_track_fragments()`, `merge_track_fragments()` (gap filling), `fragments_to_node_mapping()`
+- **`track_stats.py`** -- `analyze_track_lengths()`, `analyze_gt_tracks()`, `analyze_fragmentation()`,
+  `length_categories()`
 
 ### `analysis/`
 - **`calcium_roi.py`** -- ROI-based calcium signal extraction and analysis
@@ -31,7 +42,19 @@ calcium signal analysis for PIEZO1 puncta in dual-channel microscopy data.
   - `analyze_all_tracks()` -- batch analysis for all tracks
 
 ### `utils/`
-- **`psf_models.py`** -- point spread function models
+- **`psf_models.py`** -- point spread function models (`Gaussian2DPSF`, `Airy2DPSF`, `add_noise`)
+
+### `web/` -- web interface (FastAPI + plain ES modules), port 8209
+- **`app.py`** -- routes under /api (`/info`, `/pipeline`, `/params`, `/demo` GET and exported to the static site;
+  POST `/roi`, `/tracks`; local-only `/models` needs PyTorch), `STATIC_ENDPOINTS`
+- **`content.py`** -- pipeline stage descriptions; **`params.py`** -- configs/*.yaml and script options (ast) with units
+- **`demo.py`** -- demo JSON, `roi_on()`/`run_roi()` (CalciumROIAnalyzer), `run_tracks()` (oracle links + linking
+  + gap filling), `clean()` for JSON
+- **`static/`** -- `index.html`, `core.js` + `style.css` (shared kit), `main.js`, `static_api.js`, `data.js`,
+  `charts.js`, pages (`home`, `pipeline`, `params`, `roi`, `tracks`, `psf`, `about`), JS ports
+  `roi_engine.js`, `track_engine.js`, `psf_engine.js` with node tests `*.test.mjs` (+ `test_util.mjs`)
+- `run_web.py` (repo root) starts it; `scripts/build_static.py` exports the static site; `scripts/screenshots.py`
+  smoke-tests routes; `scripts/make_engine_fixture.py` writes `tests/fixtures/engine_cases.json`
 
 ## Scripts: `scripts/`
 - `01_generate_synthetic_data.py` -- synthetic data generation
@@ -42,7 +65,7 @@ calcium signal analysis for PIEZO1 puncta in dual-channel microscopy data.
 - `03c_evaluate_magik.py` -- MAGIK evaluation
 - `04_run_pipeline.py` -- full pipeline (detect + track)
 - `06_visualize_results.py` -- result visualization
-- `07_analyze_tracks.py` -- track analysis (MSD, diffusion)
+- `07_analyze_tracks.py` -- track quality (lengths, spans, gaps, fragmentation)
 - `08_fill_track_gaps.py` -- gap filling in tracks
 - `09_run_complete_pipeline.py` -- end-to-end pipeline
 - `11-14_download_*.py` -- public dataset downloaders
@@ -54,6 +77,11 @@ calcium signal analysis for PIEZO1 puncta in dual-channel microscopy data.
 ## Tests: `tests/`
 - `test_decode_net.py` -- forward-pass shape tests for DECODE
 - `test_magik_gnn.py` -- forward-pass shape tests for MAGIK
+- `test_packaging.py` -- find_packages and build backend
+- `test_run_pipeline_tracking.py` -- 04_run_pipeline.py stage 2 runs (untrained MAGIK)
+- `test_tracking_linking.py` -- linking, gap filling, track statistics
+- `test_calcium_roi.py` -- ROI extraction edge cases, trace/dF/F0/events
+- `test_web.py` -- web API, static build, fixture currency, node engine tests
 - `debug_decode.py` -- interactive model debugging (moved from scripts/)
 
 ## Config: `configs/`
